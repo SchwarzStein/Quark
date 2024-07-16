@@ -35,6 +35,8 @@ pub static ENABLE_CC: AtomicBool = AtomicBool::new(false);
 pub static IDENTICAL_MAPPING: AtomicBool = AtomicBool::new(true);
 #[cfg (feature = "tdx")]
 pub static TDX_ENABLED: AtomicBool = AtomicBool::new(false);
+#[cfg (feature = "tdx")]
+pub static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[inline(always)]
 #[cfg (feature = "cc")]
