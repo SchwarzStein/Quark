@@ -1,8 +1,10 @@
 arch = $(shell uname -m)
 kernel := ../build/qkernel.bin
 cc_kernel = ../build/qkernel_cc.bin
+tdx_kernel = ../build/qkernel_tdx.bin
 kernel_debug := ../build/qkernel_d.bin
 cc_kernel_debug := ../build/qkernel_d_cc.bin
+tdx_kernel_debug := ../build/qkernel_d_tdx.bin
 target ?= $(arch)-qkernel
 qkernel := ../target/$(target)/release/libqkernel.a
 qkernel_debug := ../target/$(target)/debug/libqkernel.a
@@ -22,6 +24,10 @@ cc_release: $(cc_kernel)
 
 cc_debug: $(cc_kernel_debug)
 
+tdx_release: $(tdx_kernel)
+
+tdx_debug: $(tdx_kernel_debug)
+
 $(kernel): kernel $(assembly_object_files)
 	@ld --gc-sections -T $(linker_script) -o $(kernel) \
 		$(assembly_object_files) $(qkernel)
@@ -38,6 +44,14 @@ $(cc_kernel_debug): cc_kernel_debug $(assembly_object_files)
 	@ld --gc-sections -T $(linker_script) -o $(kernel_debug) \
 		$(assembly_object_files) $(qkernel_debug)
 
+$(tdx_kernel): tdx_kernel $(assembly_object_files)
+	@ld -n --gc-sections -T $(linker_script) -o $(kernel) \
+		$(assembly_object_files) $(qkernel)
+
+$(tdx_kernel_debug): tdx_kernel_debug $(assembly_object_files)
+	@ld -n --gc-sections -T $(linker_script) -o $(kernel_debug) \
+		$(assembly_object_files) $(qkernel_debug)
+
 kernel:
 	CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --target $(arch)-qkernel.json --release
 
@@ -49,6 +63,12 @@ cc_kernel:
 
 cc_kernel_debug:
 	CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --target $(arch)-qkernel.json --features cc
+
+tdx_kernel:
+	CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --target $(arch)-qkernel.json --release --features tdx
+
+tdx_kernel_debug:
+	CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --target $(arch)-qkernel.json --features tdx
 
 ../build/arch/$(arch)/%.o: src/qlib/kernel/arch/$(arch)/%.s
 	@mkdir -p $(shell dirname $@)
