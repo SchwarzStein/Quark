@@ -17,3 +17,9 @@ cc_debug:
 
 cc_release:
 	CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --release --features cc
+
+tdx_debug:
+	CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --features tdx
+
+tdx_release:
+	CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --release --features tdx
