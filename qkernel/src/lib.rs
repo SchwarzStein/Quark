@@ -91,8 +91,8 @@ use self::qlib::kernel::memmgr;
 use self::qlib::kernel::perflog;
 use self::qlib::kernel::quring;
 use self::qlib::kernel::Kernel;
-#[cfg (feature = "cc")]
-use self::qlib::kernel::Kernel::{ENABLE_CC, is_cc_enabled};
+#[cfg(feature = "cc")]
+use self::qlib::kernel::Kernel::{is_cc_enabled, ENABLE_CC};
 use self::qlib::kernel::*;
 use self::qlib::{ShareSpaceRef, SysCallID};
 //use self::vcpu::*;
@@ -118,6 +118,21 @@ use self::quring::*;
 use self::syscalls::syscalls::*;
 use self::task::*;
 use self::threadmgr::task_sched::*;
+
+#[cfg(feature = "tdx")]
+use self::qlib::cc::tdx::{set_memory_shared_2mb, set_sbit_mask};
+#[cfg(feature = "tdx")]
+use self::qlib::cc::*;
+#[cfg(feature = "tdx")]
+use self::qlib::kernel::Kernel::{IS_INITIALIZED, IS_INITIALIZED_COUNTER, TDX_ENABLED};
+#[cfg(feature = "tdx")]
+use x86_64::instructions::tables::load_tss;
+#[cfg(feature = "tdx")]
+use x86_64::registers::segmentation::*;
+#[cfg(feature = "tdx")]
+use x86_64::structures::gdt::*;
+#[cfg(feature = "tdx")]
+use x86_64::structures::tss::*;
 
 #[cfg(feature = "cc")]
 use self::qlib::mem::cc_allocator::*;
@@ -147,7 +162,7 @@ pub static GLOBAL_ALLOCATOR: HostAllocator = HostAllocator::New();
 //pub static GLOBAL_ALLOCATOR: BitmapAllocatorWrapper = BitmapAllocatorWrapper::New();
 
 #[cfg(feature = "cc")]
-pub static  IS_GUEST: bool = true;
+pub static IS_GUEST: bool = true;
 #[cfg(feature = "cc")]
 pub static GUEST_HOST_SHARED_ALLOCATOR: GuestHostSharedAllocator = GuestHostSharedAllocator::New();
 
@@ -157,7 +172,8 @@ lazy_static! {
 
 #[cfg(feature = "cc")]
 lazy_static! {
-    pub static ref PRIVATE_VCPU_ALLOCATOR: Box<PrivateVcpuAllocators> = Box::new(PrivateVcpuAllocators::New());
+    pub static ref PRIVATE_VCPU_ALLOCATOR: Box<PrivateVcpuAllocators> =
+        Box::new(PrivateVcpuAllocators::New());
     pub static ref PAGE_MGR_HOLDER: Box<PageMgr> = Box::new(PageMgr::default());
     pub static ref IO_URING_HOLDER: Box<QUring> = Box::new(QUring::New(MemoryDef::QURING_SIZE));
     pub static ref GUEST_KERNEL: Mutex<Option<kernel::kernel::Kernel>> = Mutex::new(None);
@@ -167,6 +183,59 @@ pub fn AllocIOBuf(size: usize) -> *mut u8 {
     unsafe {
         return GLOBAL_ALLOCATOR.AllocIOBuf(size);
     }
+}
+
+#[cfg(feature = "tdx")]
+unsafe fn init_tss(gdt: &mut GlobalDescriptorTable, tssaddr: u64, tssIntStackStart: u64) {
+    use bit_field::BitField;
+    let stack_end = x86_64::VirtAddr::from_ptr(
+        (tssIntStackStart + MemoryDef::INTERRUPT_STACK_PAGES * MemoryDef::PAGE_SIZE) as *const u64,
+    );
+    let tssSegment = tssaddr as *mut x86_64::structures::tss::TaskStateSegment;
+    (*tssSegment).interrupt_stack_table[0] = stack_end;
+    (*tssSegment).iomap_base = -1 as i16 as u16;
+    let mut low = DescriptorFlags::PRESENT.bits();
+    // base
+    low.set_bits(16..40, tssaddr.get_bits(0..24));
+    low.set_bits(56..64, tssaddr.get_bits(24..32));
+    // limit
+    low.set_bits(0..16, (core::mem::size_of::<TaskStateSegment>() - 1) as u64);
+    // type
+    low.set_bits(40..44, 0b1001);
+
+    let mut high = 0;
+    high.set_bits(0..32, tssaddr.get_bits(32..64));
+
+    let tss_descriptor = Descriptor::SystemSegment(low, high);
+    let tss_segment_selector = gdt.add_entry(tss_descriptor);
+
+    gdt.load_unsafe();
+
+    load_tss(tss_segment_selector);
+}
+
+#[cfg(feature = "tdx")]
+pub unsafe fn init_gdt(vcpuid: u64) {
+    let vmRegs = &(*(MemoryDef::VM_REGS_OFFSET as *const VMRegsArray)).vmRegsWrappers
+        [vcpuid as usize]
+        .vmRegs;
+    let gdtAddr = vmRegs.gdtaddr;
+    let tssAddr = vmRegs.tssaddr;
+    let tssIntStackStart = vmRegs.tssIntStackStart;
+    let gdt = &mut *(gdtAddr as *mut GlobalDescriptorTable);
+    *gdt = GlobalDescriptorTable::new();
+    let kcode64 = gdt.add_entry(Descriptor::kernel_code_segment());
+    let kdata = gdt.add_entry(Descriptor::kernel_data_segment());
+    let udata = gdt.add_entry(Descriptor::user_data_segment());
+    let _ucode64 = gdt.add_entry(Descriptor::user_code_segment());
+    gdt.load_unsafe();
+    CS::set_reg(kcode64);
+    DS::set_reg(udata);
+    ES::set_reg(udata);
+    SS::set_reg(kdata);
+    FS::set_reg(udata);
+    GS::set_reg(udata);
+    init_tss(gdt, tssAddr, tssIntStackStart);
 }
 
 pub fn SingletonInit() {
@@ -182,20 +251,28 @@ pub fn SingletonInit() {
         // the error! can run after this point
         //error!("error message");
 
-        #[cfg(not(feature = "cc"))]{
+        #[cfg(not(feature = "cc"))]
+        {
+            KERNEL_PAGETABLE.Init(PageTables::Init(CurrentUserTable()));
             SHARESPACE.SetSignalHandlerAddr(SignalHandler as u64);
             PAGE_MGR.SetValue(SHARESPACE.GetPageMgrAddr());
             IOURING.SetValue(SHARESPACE.GetIOUringAddr());
         }
 
         #[cfg(feature = "cc")]
-        if is_cc_enabled(){
-            PAGE_MGR.SetValue(PAGE_MGR_HOLDER.Addr());
+        if is_cc_enabled() {
+            if !TDX_ENABLED.load(Ordering::Acquire) {
+                KERNEL_PAGETABLE.Init(PageTables::Init(CurrentUserTable()));
+                interrupt::InitSingleton();
+                PAGE_MGR.SetValue(PAGE_MGR_HOLDER.Addr());
+            }
             IOURING.SetValue(IO_URING_HOLDER.Addr());
         } else {
+            KERNEL_PAGETABLE.Init(PageTables::Init(CurrentUserTable()));
             SHARESPACE.SetSignalHandlerAddr(SignalHandler as u64);
             PAGE_MGR.SetValue(SHARESPACE.GetPageMgrAddr());
             IOURING.SetValue(SHARESPACE.GetIOUringAddr());
+            interrupt::InitSingleton();
         }
         LOADER.Init(Loader::default());
         KERNEL_STACK_ALLOCATOR.Init(AlignedAllocator::New(
@@ -543,7 +620,7 @@ pub fn MainRun(currTask: &mut Task, mut state: TaskRunState) {
                     thread.lock().memoryMgr = currTask.mm.clone();
                     #[cfg(not(feature = "cc"))]
                     CPULocal::SetPendingFreeStack(currTask.taskId);
-                    #[cfg (feature = "cc")]
+                    #[cfg(feature = "cc")]
                     CPULocal::SetPendingFreeStack(currTask.taskId, currTask.taskWrapperId);
 
                     /*if !SHARESPACE.config.read().KernelPagetable {
@@ -603,6 +680,19 @@ fn InitLoader() {
     LOADER.InitKernel(process).unwrap();
 }
 
+#[cfg(feature = "tdx")]
+//Need to initialize PAGEMGR(pagepool for page allocator) and kernel page table in advance
+fn InitShareMemory() {
+    set_memory_shared_2mb(
+        VirtAddr::new(MemoryDef::FILE_MAP_OFFSET),
+        MemoryDef::FILE_MAP_SIZE / MemoryDef::PAGE_SIZE_2M,
+    );
+    set_memory_shared_2mb(
+        VirtAddr::new(MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET),
+        MemoryDef::GUEST_HOST_SHARED_HEAP_SIZE / MemoryDef::PAGE_SIZE_2M,
+    );
+}
+
 #[no_mangle]
 pub extern "C" fn rust_main(
     heapStart: u64,
@@ -626,6 +716,29 @@ pub extern "C" fn rust_main(
             }
             if shareSpaceAddr < (CCMode::Max as u64) {
                 ENABLE_CC.store(true, Ordering::Release);
+                match CCMode::from(shareSpaceAddr) {
+                    #[cfg(feature = "tdx")]
+                    CCMode::TDX => {
+                        TDX_ENABLED.store(true, Ordering::Release);
+                        //Memory is accpeted in firmware
+                        /*tdx_tdcall::tdx::td_accept_memory(
+                            MemoryDef::PHY_LOWER_ADDR,
+                            MemoryDef::IO_HEAP_END - MemoryDef::PHY_LOWER_ADDR,
+                        );*/
+                        GLOBAL_ALLOCATOR.SwitchToPrivateRunningHeap();
+                        unsafe {
+                            KERNEL_PAGETABLE.Init(PageTables::Init(CurrentKernelTable()));
+                            init_gdt(id);
+                            interrupt::InitSingleton();
+                        }
+                        interrupt::init();
+                        set_sbit_mask();
+                        PAGE_MGR.SetValue(PAGE_MGR_HOLDER.Addr());
+                        //Tdcall convert shared memory
+                        InitShareMemory();
+                    }
+                    _ => (),
+                }
                 GLOBAL_ALLOCATOR.InitSharedAllocator_cc();
                 let size = core::mem::size_of::<ShareSpace>();
                 let shared_space = unsafe {
@@ -668,10 +781,26 @@ pub extern "C" fn rust_main(
         // release other vcpus
         HyperCall64(qlib::HYPERCALL_RELEASE_VCPU, 0, 0, 0, 0);
     } else {
+        #[cfg(feature = "tdx")]
+        if TDX_ENABLED.load(Ordering::Acquire) {
+            unsafe {
+                init_gdt(id);
+            }
+        }
+        interrupt::init();
         set_cpu_local(id);
         //PerfGoto(PerfType::Kernel);
     }
-
+    let initialized_num = IS_INITIALIZED_COUNTER.fetch_add(1, Ordering::Release);
+    if initialized_num + 1 == vcpuCnt {
+        IS_INITIALIZED.store(true, Ordering::Release);
+    }
+    if IS_INITIALIZED.load(Ordering::Acquire) {
+        use crate::qlib::addr::Addr;
+        KERNEL_PAGETABLE
+            .UnmapWith1G(Addr(0), Addr(8 * MemoryDef::ONE_GB), &*PAGE_MGR)
+            .expect("Failed to unmap firmware address!");
+    }
     SHARESPACE.IncrVcpuSearching();
     taskMgr::AddNewCpu();
 
@@ -684,9 +813,6 @@ pub extern "C" fn rust_main(
     {
         RegisterExceptionTable(vector_table as u64);
     }
-
-    //interrupts::init_idt();
-    interrupt::init();
 
     /***************** can't run any qcall before this point ************************************/
 
@@ -707,7 +833,7 @@ pub extern "C" fn rust_main(
     }
     #[cfg(feature = "cc")]
     if id == 2 {
-        if is_cc_enabled(){
+        if is_cc_enabled() {
             IoHanlder();
         }
     }
