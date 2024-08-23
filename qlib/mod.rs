@@ -41,6 +41,8 @@ pub mod buddyallocator;
 pub mod common;
 pub mod idallocator;
 pub mod linux_def;
+#[cfg (feature = "cc")]
+pub mod pagetable_cc;
 pub mod pagetable;
 pub mod range;
 //pub mod Process;
