@@ -84,7 +84,7 @@ impl ConfCompExtension for EmulCc<'_> {
         arg3: u64, vcpu_id: usize) -> Result<bool , crate::qlib::common::Error> {
         let mut _exit = false;
         _exit = match hypercall {
-            HYPERCALL_SHARESPACE_INIT =>
+            qlib::HYPERCALL_SHARESPACE_INIT =>
                 self._handle_hcall_shared_space_init(data, arg0, arg1, arg2, arg3, vcpu_id)?,
             _ => false,
         };
