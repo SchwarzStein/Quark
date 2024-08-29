@@ -43,6 +43,7 @@ pub trait VmType: std::fmt::Debug {
     fn vm_vcpu_initialize(&self, kvm: &Kvm, vm_fd: &VmFd, total_vcpus: usize, entry_addr: u64,
                         auto_start: bool, page_allocator_addr: Option<u64>,
                         share_space_addr: Option<u64>) -> Result<Vec<Arc<ArchVirtCpu>>, Error>;
+    fn vm_vcpu_post_initialization(&self, vcpus: &Vec<Arc<ArchVirtCpu>>) -> Result<(), Error>;
     fn post_vm_initialize(&mut self) -> Result<(), Error>;
     fn post_init_upadate(&mut self) -> Result<(), Error>;
 }

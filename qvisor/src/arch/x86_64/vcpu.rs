@@ -137,12 +137,7 @@ impl VirtCpu for X86_64VirtCpu {
     }
 
     fn vcpu_run(&self, tgid: i32) -> Result<(), Error> {
-        self.initialize_sys_registers().expect("Can not run vcpu - failed to init sysregs");
-        self.initialize_cpu_registers().expect("Can not run vcpu - failed to init cpu-regs");
-        self.conf_comp_extension.set_sys_registers(&self.vcpu_base.vcpu_fd)?;
-        self.conf_comp_extension.set_cpu_registers(&self.vcpu_base.vcpu_fd)?;
         SetExitSignal();
-        self.vcpu_base.SignalMask();
         if self.vcpu_base.cordId > 0 {
             let core_id = core_affinity::CoreId {
                 id: self.vcpu_base.cordId as usize,
