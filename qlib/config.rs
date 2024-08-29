@@ -148,7 +148,7 @@ pub enum CCMode {
     Normal,
     NormalEmu,
     SevSnp,
-    Max
+    Max = 100,
 }
 
 impl CCMode {
