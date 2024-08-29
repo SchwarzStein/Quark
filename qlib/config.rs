@@ -148,6 +148,7 @@ pub enum CCMode {
     Normal,
     NormalEmu,
     SevSnp,
+    TDX,
     Max = 100,
 }
 
@@ -158,6 +159,7 @@ impl CCMode {
             1 => CCMode::Normal,
             2 => CCMode::NormalEmu,
             3 => CCMode::SevSnp,
+            4 => CCMode::TDX,
              //Arbitrary 'big enough', to not be confused with a future CC feature,
             //'small enough' to not be confused with a valid address.
             100 => CCMode::Max, //Arbitrary 'big enough', to not be confused with a future CC impl 
