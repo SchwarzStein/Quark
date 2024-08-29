@@ -31,6 +31,8 @@ use crate::qlib::MAX_VCPU_COUNT;
 use crate::runc::runtime::vm_type::emulcc::VmCcEmul;
 #[cfg(feature = "tdx")]
 use crate::runc::runtime::vm_type::tdx::TDX;
+#[cfg(feature = "tdx")]
+use crate::qlib::kernel::Kernel::TDX_ENABLED;
 use crate::tsot_agent::TSOT_AGENT;
 //use crate::vmspace::hibernate::HiberMgr;
 
@@ -207,6 +209,7 @@ impl VirtualMachine {
         Ok(vm)
     }
 
+    #[cfg(not(feature = "tdx"))]
     pub fn run(&mut self) -> Result<i32> {
         // start the io thread
         let cpu = self.vcpus[0].clone();
@@ -255,6 +258,90 @@ impl VirtualMachine {
 
         for t in threads {
             t.join().expect("the working threads has panicked");
+        }
+
+        URING_MGR.lock().Close();
+        Ok(GetExitStatus())
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn run(&mut self) -> Result<i32> {
+        // start the io thread
+        let cpu = self.vcpus[0].clone();
+        SetSigusr1Handler();
+        let mut threads = Vec::new();
+        let tgid = unsafe { libc::gettid() };
+
+        //The tdx shim needs all the vcpus start to run at the same time
+        if TDX_ENABLED.load(Ordering::Acquire){
+            for i in 0..self.vcpus.len() {
+                let cpu = self.vcpus[i].clone();
+
+                threads.push(
+                    thread::Builder::new()
+                        .name(format!("{}", i))
+                        .spawn(move || {
+                            THREAD_ID.with(|f| {
+                                *f.borrow_mut() = i as i32;
+                            });
+                            VCPU.with(|f| {
+                                *f.borrow_mut() = Some(cpu.clone());
+                            });
+                            info!("cpu#{} start", ThreadId());
+                            cpu.vcpu_run(tgid).expect("vcpu run fail");
+                            info!("cpu#{} finish", ThreadId());
+                        })
+                        .unwrap(),
+                );
+            }
+
+            for t in threads {
+                t.join().expect("the working threads has panicked");
+            }
+        } else {
+            threads.push(
+                thread::Builder::new()
+                    .name("0".to_string())
+                    .spawn(move || {
+                        THREAD_ID.with(|f| {
+                            *f.borrow_mut() = 0;
+                        });
+                        VCPU.with(|f| {
+                            *f.borrow_mut() = Some(cpu.clone());
+                        });
+                        cpu.vcpu_run(tgid).expect("vcpu run fail");
+                        info!("cpu0 finish");
+                    })
+                    .unwrap(),
+            );
+
+            syncmgr::SyncMgr::WaitShareSpaceReady();
+            info!("shareSpace ready...");
+            // start the vcpu threads
+            for i in 1..self.vcpus.len() {
+                let cpu = self.vcpus[i].clone();
+
+                threads.push(
+                    thread::Builder::new()
+                        .name(format!("{}", i))
+                        .spawn(move || {
+                            THREAD_ID.with(|f| {
+                                *f.borrow_mut() = i as i32;
+                            });
+                            VCPU.with(|f| {
+                                *f.borrow_mut() = Some(cpu.clone());
+                            });
+                            info!("cpu#{} start", ThreadId());
+                            cpu.vcpu_run(tgid).expect("vcpu run fail");
+                            info!("cpu#{} finish", ThreadId());
+                        })
+                        .unwrap(),
+                );
+            }
+
+            for t in threads {
+                t.join().expect("the working threads has panicked");
+            }
         }
 
         URING_MGR.lock().Close();
