@@ -40,6 +40,8 @@ pub struct VmNormal {
     vm_resources: VmResources,
     entry_address: u64,
     vdso_address: u64,
+    kvm: Option<Kvm>,
+    vm_fd: Option<VmFd>,
 }
 
 impl fmt::Debug for VmNormal {
@@ -95,6 +97,8 @@ impl VmType for VmNormal {
             },
             entry_address: _kernel_entry,
             vdso_address: _vdso_address,
+            kvm: None,
+            vm_fd: None,
         };
         let box_type: Box<dyn VmType> = Box::new(normal_vm);
 
@@ -102,7 +106,7 @@ impl VmType for VmNormal {
     }
 
     fn create_vm(
-        self: Box<VmNormal>,
+        mut self: Box<VmNormal>,
         kernel_elf: KernelELF,
         args: Args,
     ) -> Result<VirtualMachine, Error> {
@@ -152,13 +156,13 @@ impl VmType for VmNormal {
             URING_MGR.lock();
         }
 
-        let _kvm: Kvm;
-        let vm_fd: VmFd;
+        let _kvm: &Kvm;
+        let vm_fd: &VmFd;
         let _kvm_fd = VMS.lock().args.as_ref().unwrap().KvmFd;
         match self.create_kvm_vm(_kvm_fd) {
-            Ok((__kvm, __vm_fd)) => {
-                _kvm = __kvm;
-                vm_fd = __vm_fd;
+            Ok(_) => {
+                _kvm = self.kvm.as_ref().unwrap();
+                vm_fd = self.vm_fd.as_ref().unwrap();
                 info!("VM cration - kvm-vm_fd initialized.");
             }
             Err(e) => {
@@ -167,14 +171,14 @@ impl VmType for VmNormal {
             }
         };
 
-        self.vm_memory_initialize(&vm_fd)
+        self.vm_memory_initialize(vm_fd)
             .expect("VM creation failed on memory initialization.");
         let (heap_base, _, _) = self.vm_resources.mem_area_info(SharedHeapArea).unwrap();
         let _auto_start = VMS.lock().args.as_ref().unwrap().AutoStart;
         let _vcpus = self
             .vm_vcpu_initialize(
-                &_kvm,
-                &vm_fd,
+                _kvm,
+                vm_fd,
                 _vcpu_total,
                 self.entry_address,
                 _auto_start,
@@ -182,11 +186,12 @@ impl VmType for VmNormal {
                 Some(SHARE_SPACE.Value()),
             )
             .expect("VM creation failed on vcpu creation.");
-
+        let kvm = self.kvm.take().unwrap();
+        let vmfd = self.vm_fd.take().unwrap();
         let _vm_type: Box<dyn VmType> = self;
         let vm = VirtualMachine {
-            kvm: _kvm,
-            vmfd: vm_fd,
+            kvm: kvm,
+            vmfd: vmfd,
             vm_type: _vm_type,
             vcpus: _vcpus,
             elf: kernel_elf,
@@ -279,7 +284,7 @@ impl VmType for VmNormal {
         Ok(())
     }
 
-    fn create_kvm_vm(&self, kvm_fd: i32) -> Result<(Kvm, VmFd), Error> {
+    fn create_kvm_vm(&mut self, kvm_fd: i32) -> Result<(), Error> {
         let kvm = unsafe { Kvm::from_raw_fd(kvm_fd) };
 
         if !kvm.check_extension(Cap::ImmediateExit) {
@@ -299,7 +304,9 @@ impl VmType for VmNormal {
             vm_fd.enable_cap(&cap).unwrap();
         }
 
-        Ok((kvm, vm_fd))
+        self.kvm = Some(kvm);
+        self.vm_fd = Some(vm_fd);
+        Ok(())
     }
 
     fn vm_memory_initialize(&self, vm_fd: &VmFd) -> Result<(), Error> {

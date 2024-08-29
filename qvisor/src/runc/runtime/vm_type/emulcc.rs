@@ -38,6 +38,8 @@ pub struct VmCcEmul {
     entry_address: u64,
     vdso_address: u64,
     emul_cc_mode: CCMode,
+    kvm: Option<Kvm>,
+    vm_fd: Option<VmFd>,
 }
 
 #[cfg(feature = "cc")]
@@ -104,6 +106,8 @@ impl VmType for VmCcEmul {
             entry_address: _kernel_entry,
             vdso_address: _vdso_address,
             emul_cc_mode: _emul_type,
+            kvm: None,
+            vm_fd: None,
         };
         let box_type: Box<dyn VmType> = Box::new(vm_cc_emul);
 
@@ -111,7 +115,7 @@ impl VmType for VmCcEmul {
     }
 
     fn create_vm(
-        self: Box<VmCcEmul>,
+        mut self: Box<VmCcEmul>,
         kernel_elf: KernelELF,
         args: Args,
     ) -> Result<VirtualMachine, Error> {
@@ -148,13 +152,13 @@ impl VmType for VmCcEmul {
             URING_MGR.lock();
         }
 
-        let _kvm: Kvm;
-        let vm_fd: VmFd;
+        let _kvm: &Kvm;
+        let vm_fd: &VmFd;
         let _kvm_fd = VMS.lock().args.as_ref().unwrap().KvmFd;
         match self.create_kvm_vm(_kvm_fd) {
-            Ok((__kvm, __vm_fd)) => {
-                _kvm = __kvm;
-                vm_fd = __vm_fd;
+            Ok(_) => {
+                _kvm = self.kvm.as_ref().unwrap();
+                vm_fd = self.vm_fd.as_ref().unwrap();
                 info!("VM cration - kvm-vm_fd initialized.");
             }
             Err(e) => {
@@ -163,15 +167,15 @@ impl VmType for VmCcEmul {
             }
         };
 
-        self.vm_memory_initialize(&vm_fd)
+        self.vm_memory_initialize(vm_fd)
             .expect("VM creation failed on memory initialization.");
         let (_, pheap, _) = self.vm_resources.mem_area_info(MemArea::PrivateHeapArea).unwrap();
         let _vcpu_total = VMS.lock().vcpuCount;
         let _auto_start = VMS.lock().args.as_ref().unwrap().AutoStart;
         let _vcpus = self
             .vm_vcpu_initialize(
-                &_kvm,
-                &vm_fd,
+                _kvm,
+                vm_fd,
                 _vcpu_total,
                 self.entry_address,
                 _auto_start,
@@ -179,10 +183,12 @@ impl VmType for VmCcEmul {
                 None)
             .expect("VM creation failed on vcpu creation.");
 
+        let kvm = self.kvm.take().unwrap();
+        let vmfd = self.vm_fd.take().unwrap();
         let _vm_type: Box<dyn VmType> = self;
         let vm = VirtualMachine {
-            kvm: _kvm,
-            vmfd: vm_fd,
+            kvm: kvm,
+            vmfd: vmfd,
             vm_type: _vm_type,
             vcpus: _vcpus,
             elf: kernel_elf,
@@ -304,7 +310,7 @@ impl VmType for VmCcEmul {
         Ok(())
     }
 
-    fn create_kvm_vm(&self, kvm_fd: i32) -> Result<(Kvm, VmFd), Error> {
+    fn create_kvm_vm(&mut self, kvm_fd: i32) -> Result<(), Error> {
         let kvm = unsafe { Kvm::from_raw_fd(kvm_fd) };
 
         if !kvm.check_extension(Cap::ImmediateExit) {
@@ -324,7 +330,9 @@ impl VmType for VmCcEmul {
             vm_fd.enable_cap(&cap).unwrap();
         }
 
-        Ok((kvm, vm_fd))
+        self.kvm = Some(kvm);
+        self.vm_fd = Some(vm_fd);
+        Ok(())
     }
 
     fn init_share_space(vcpu_count: usize, control_sock: i32, rdma_svc_cli_sock: i32,
