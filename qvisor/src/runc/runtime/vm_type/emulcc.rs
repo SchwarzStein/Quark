@@ -172,7 +172,7 @@ impl VmType for VmCcEmul {
         let (_, pheap, _) = self.vm_resources.mem_area_info(MemArea::PrivateHeapArea).unwrap();
         let _vcpu_total = VMS.lock().vcpuCount;
         let _auto_start = VMS.lock().args.as_ref().unwrap().AutoStart;
-        let _vcpus = self
+        let vcpus = self
             .vm_vcpu_initialize(
                 _kvm,
                 vm_fd,
@@ -183,6 +183,8 @@ impl VmType for VmCcEmul {
                 None)
             .expect("VM creation failed on vcpu creation.");
 
+        #[cfg(target_arch = "x86_64")]
+        self.vm_vcpu_post_initialization(&vcpus);
         let kvm = self.kvm.take().unwrap();
         let vmfd = self.vm_fd.take().unwrap();
         let _vm_type: Box<dyn VmType> = self;
@@ -190,7 +192,7 @@ impl VmType for VmCcEmul {
             kvm: kvm,
             vmfd: vmfd,
             vm_type: _vm_type,
-            vcpus: _vcpus,
+            vcpus: vcpus,
             elf: kernel_elf,
         };
         Ok(vm)
@@ -417,6 +419,17 @@ impl VmType for VmCcEmul {
     }
 
     fn post_init_upadate(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    
+    fn vm_vcpu_post_initialization(&self, vcpus: &Vec<Arc<ArchVirtCpu>>) -> Result<(), Error> {
+        for vcpu in vcpus{
+            vcpu.initialize_sys_registers().expect("Can not run vcpu - failed to init sysregs");
+            vcpu.initialize_cpu_registers().expect("Can not run vcpu - failed to init cpu-regs");
+            vcpu.conf_comp_extension.set_sys_registers(&vcpu.vcpu_base.vcpu_fd)?;
+            vcpu.conf_comp_extension.set_cpu_registers(&vcpu.vcpu_base.vcpu_fd)?;
+            vcpu.vcpu_base.SignalMask();
+        }
         Ok(())
     }
 }
