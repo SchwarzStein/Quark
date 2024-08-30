@@ -41,6 +41,8 @@ use crate::qlib::cc::*;
 use crate::qlib::kernel::Kernel::TDX_ENABLED;
 #[cfg(feature = "tdx")]
 use crate::qlib::common::CR4_MCE;
+#[cfg(feature = "tdx")]
+use crate::arch::tee::tdx::Tdx;
 
 pub struct X86_64VirtCpu {
     pub gtd_addr: u64,
@@ -94,6 +96,9 @@ impl VirtCpu for X86_64VirtCpu {
             CCMode::Normal | CCMode::NormalEmu =>
                 EmulCc::initialize_conf_extension(share_space_table_addr,
                 page_allocator_base_addr)?,
+            #[cfg(feature = "tdx")]
+            CCMode::TDX => 
+                Tdx::initialize_conf_extension(share_space_table_addr, page_allocator_base_addr)?,
             _ => {
                 return Err(Error::InvalidArgument("Create vcpu failed - bad CCMode type"
                     .to_string()));

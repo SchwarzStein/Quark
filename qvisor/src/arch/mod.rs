@@ -44,7 +44,7 @@ pub trait ConfCompExtension: Send + Sync {
         page_allocator_base_addr: Option<u64>) -> Result<Box<dyn ConfCompExtension>, Error>
         where Self: Sized;
     fn set_sys_registers(&self, vcpu_fd: &VcpuFd) -> Result<(), Error>;
-    fn set_cpu_registers(&self, vcpu_fd: &VcpuFd) -> Result<(), Error>;
+    fn set_cpu_registers(&self, vcpu_fd: &VcpuFd, vcpu_id: usize) -> Result<(), Error>;
     fn get_hypercall_arguments(&self, vcpu_fd: &VcpuFd, vcpu_id: usize)
         -> Result<(u64, u64, u64, u64), Error>;
     fn should_handle_kvm_exit(&self, kvm_exit: &VcpuExit) -> bool;

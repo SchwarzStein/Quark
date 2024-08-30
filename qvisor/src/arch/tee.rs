@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub mod emulcc;
+pub mod tdx;
 
 use kvm_ioctls::{VcpuExit, VcpuFd};
 
@@ -54,7 +55,7 @@ impl ConfCompExtension for NonConf<'_> {
 
     fn set_sys_registers(&self, _vcpu_fd: &VcpuFd) -> Result<(), Error> { Ok(()) }
 
-    fn set_cpu_registers(&self, vcpu_fd: &VcpuFd) -> Result<(), Error> {
+    fn set_cpu_registers(&self, vcpu_fd: &VcpuFd, _vcpu_id: usize) -> Result<(), Error> {
         self._set_cpu_registers(&vcpu_fd)
     }
 

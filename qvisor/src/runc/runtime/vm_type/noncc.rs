@@ -379,12 +379,12 @@ impl VmType for VmNormal {
         Ok(())
     }
     
-    fn vm_vcpu_post_initialization(&self, vcpus: &Vec<Arc<ArchVirtCpu>>) -> Result<(), Error> {
+    fn vm_vcpu_post_initialization(&mut self, vcpus: &Vec<Arc<ArchVirtCpu>>) -> Result<(), Error> {
         for vcpu in vcpus{
             vcpu.initialize_sys_registers().expect("Can not run vcpu - failed to init sysregs");
             vcpu.initialize_cpu_registers().expect("Can not run vcpu - failed to init cpu-regs");
             vcpu.conf_comp_extension.set_sys_registers(&vcpu.vcpu_base.vcpu_fd)?;
-            vcpu.conf_comp_extension.set_cpu_registers(&vcpu.vcpu_base.vcpu_fd)?;
+            vcpu.conf_comp_extension.set_cpu_registers(&vcpu.vcpu_base.vcpu_fd, vcpu.vcpu_base.id)?;
             vcpu.vcpu_base.SignalMask();
         }
         Ok(())

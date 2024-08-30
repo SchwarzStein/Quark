@@ -30,7 +30,7 @@ use crate::qlib::kernel::Kernel::{ENABLE_CC, IDENTICAL_MAPPING};
 use crate::qlib::MAX_VCPU_COUNT;
 use crate::runc::runtime::vm_type::emulcc::VmCcEmul;
 #[cfg(feature = "tdx")]
-use crate::runc::runtime::vm_type::tdx::TDX;
+use crate::runc::runtime::vm_type::tdx::VmTDX;
 #[cfg(feature = "tdx")]
 use crate::qlib::kernel::Kernel::TDX_ENABLED;
 use crate::tsot_agent::TSOT_AGENT;
@@ -195,7 +195,7 @@ impl VirtualMachine {
             CCMode::Normal | CCMode::NormalEmu =>
                 VmCcEmul::init(Some(&args))?,
             #[cfg(feature = "tdx")]
-            CCMode::TDX => TDX::init(Some(&args))?,
+            CCMode::TDX => VmTDX::init(Some(&args))?,
             _ => panic!("Unhandled type."),
         };
         let umask = Self::Umask();

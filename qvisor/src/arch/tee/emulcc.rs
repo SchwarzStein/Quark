@@ -55,7 +55,7 @@ impl ConfCompExtension for EmulCc<'_> {
         Ok(())
     }
 
-    fn set_cpu_registers(&self, vcpu_fd: &kvm_ioctls::VcpuFd) -> Result<(), crate::qlib::common::Error> {
+    fn set_cpu_registers(&self, vcpu_fd: &kvm_ioctls::VcpuFd, _vcpu_id: usize) -> Result<(), crate::qlib::common::Error> {
         self._set_cpu_registers(&vcpu_fd)
     }
 
