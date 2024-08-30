@@ -64,13 +64,7 @@ impl Tdx<'_> {
         use crate::qlib::cc::*;
         let vm_regs_array = unsafe { &mut *(MemoryDef::VM_REGS_OFFSET as *mut VMRegsArray) };
         let vm_regs = &mut vm_regs_array.vmRegsWrappers[vcpu_id].vmRegs;
-        let mut cpu_regs = vcpu_fd.get_regs().unwrap();
         //arg0
-        cpu_regs.rdi = self.page_allocator_addr;
-        //arg1
-        cpu_regs.rsi = self.cc_mode as u64;
-        vcpu_fd.set_regs(&cpu_regs)
-            .expect("vCPU - failed to set up cpu registers.");
         vm_regs.rdi = self.page_allocator_addr;
         //arg1
         vm_regs.rsi = self.cc_mode as u64;
