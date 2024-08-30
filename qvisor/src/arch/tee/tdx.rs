@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::os::fd::AsRawFd;
 use core::sync::atomic::Ordering;
+use std::os::fd::AsRawFd;
 
 use crate::qlib::linux_def::MemoryDef;
 use crate::runc::runtime::vm::VirtualMachine;
@@ -27,8 +27,8 @@ use kvm_ioctls::{Kvm, VcpuExit, VmFd};
 use qlib::common::Error;
 use qlib::config::CCMode;
 static mut DUMMY_U64: u64 = 0u64;
-use kvm_ioctls::TDXExit;
 use kvm_bindings::kvm_memory_attributes;
+use kvm_ioctls::TDXExit;
 const KVM_MEMORY_ATTRIBUTE_PRIVATE: u64 = 1 << 3;
 
 pub struct Tdx<'a> {
@@ -135,6 +135,12 @@ impl ConfCompExtension for Tdx<'_> {
             qlib::HYPERCALL_SHARESPACE_INIT => {
                 self._handle_hcall_shared_space_init(data, arg0, arg1, arg2, arg3, vcpu_id)?
             }
+            qlib::HYPERCALL_DEBUG_OUTPUT => {
+                self._handle_debug_output(data, arg0, arg1, arg2, arg3, vcpu_id)?
+            }
+            qlib::HYPERCALL_WAIT_BSP_INIT => {
+                self._handle_wait_bsp_init(data, arg0, arg1, arg2, arg3, vcpu_id)?
+            }
             _ => false,
         };
 
@@ -212,11 +218,42 @@ impl Tdx<'_> {
 
         Ok(false)
     }
-    pub(self) fn _handle_tdx_exit(
+
+    pub(self) fn _handle_debug_output(
         &self,
-        exit: &mut TDXExit,
-        vm_fd: &VmFd,
+        data: &[u8],
+        arg0: u64,
+        arg1: u64,
+        arg2: u64,
+        arg3: u64,
+        vcpu_id: usize,
     ) -> Result<bool, Error> {
+        let len = data.len();
+        match len {
+            1 => info!("{:x}", data[0]),
+            2 => info!("{:x}", unsafe { *(&data[0] as *const _ as *const u16) }),
+            4 => info!("{:x}", unsafe { *(&data[0] as *const _ as *const u32) }),
+            _ => (),
+        }
+        Ok(false)
+    }
+
+    pub(self) fn _handle_wait_bsp_init(
+        &self,
+        data: &[u8],
+        arg0: u64,
+        arg1: u64,
+        arg2: u64,
+        arg3: u64,
+        vcpu_id: usize,
+    ) -> Result<bool, Error> {
+        info!("cpu {:x} is waiting for the bsp", vcpu_id);
+        crate::syncmgr::SyncMgr::WaitShareSpaceReady();
+        info!("cpu {:x} returns to the guest", vcpu_id);
+        Ok(false)
+    }
+
+    pub(self) fn _handle_tdx_exit(&self, exit: &mut TDXExit, vm_fd: &VmFd) -> Result<bool, Error> {
         use crate::qlib::cc::tdx::S_BIT_MASK;
         const TDG_VP_VMCALL_SUCCESS: u64 = 0x0000000000000000;
         const TDG_VP_VMCALL_RETRY: u64 = 0x0000000000000001;
