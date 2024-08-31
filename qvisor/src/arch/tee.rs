@@ -97,7 +97,7 @@ pub mod util {
     #[inline]
     pub fn get_offset(confidentiality_type: CCMode) -> u64 {
         let offset = match confidentiality_type {
-            CCMode::None | CCMode::Normal =>
+            CCMode::None | CCMode::Normal | CCMode::TDX=>
                 0,
             #[cfg(feature = "cc")]
             CCMode::NormalEmu =>
