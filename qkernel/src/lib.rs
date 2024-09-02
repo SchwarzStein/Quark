@@ -134,14 +134,18 @@ mod syscalls;
 
 cfg_cc! {
     use crate::qlib::ShareSpace;
-    use crate::qlib::kernel::Kernel::{ENABLE_CC, is_cc_enabled};
+    use crate::qlib::kernel::Kernel::{ENABLE_CC, is_cc_enabled, IS_SEV_SNP};
+    use crate::qlib::kernel::Kernel_cc::LOG_AVAILABLE;
     use crate::qlib::mem::cc_allocator::*;
     use alloc::boxed::Box;
     use memmgr::pma::PageMgr;
+    use crate::qlib::kernel::arch::__arch::arch_def::*;
 }
 
 #[cfg(feature = "snp")]
 use crate::qlib::cc::sev_snp::ghcb::*;
+#[cfg(feature = "snp")]
+use self::qlib::cc::sev_snp::{set_cbit_mask, pvalidate, PvalidateSize};
 
 #[global_allocator]
 pub static VCPU_ALLOCATOR: GlobalVcpuAllocator = GlobalVcpuAllocator::New();
@@ -177,7 +181,6 @@ pub fn SingletonInit() {
         vcpu::VCPU_COUNT.Init(AtomicUsize::new(0));
         vcpu::CPU_LOCAL.Init(&SHARESPACE.scheduler.VcpuArr);
         set_cpu_local(0);
-        KERNEL_PAGETABLE.Init(PageTables::Init(CurrentUserTable()));
         //init fp state with current fp state as it is brand new vcpu
         FP_STATE.Reset();
         //SHARESPACE.SetvirtualizationHandlerAddr(virtualization_handler as u64);
@@ -186,6 +189,7 @@ pub fn SingletonInit() {
         //error!("error message");
 
         #[cfg(not(feature = "cc"))]{
+            KERNEL_PAGETABLE.Init(PageTables::Init(CurrentUserTable()));
             SHARESPACE.SetSignalHandlerAddr(SignalHandler as u64);
             PAGE_MGR.SetValue(SHARESPACE.GetPageMgrAddr());
             IOURING.SetValue(SHARESPACE.GetIOUringAddr());
@@ -193,12 +197,18 @@ pub fn SingletonInit() {
 
         #[cfg(feature = "cc")]
         if is_cc_enabled(){
-            PAGE_MGR.SetValue(PAGE_MGR_HOLDER.Addr());
+            if !IS_SEV_SNP.load(Ordering::Acquire){
+                KERNEL_PAGETABLE.Init(PageTables::Init(CurrentUserTable()));
+                interrupt::InitSingleton();
+                PAGE_MGR.SetValue(PAGE_MGR_HOLDER.Addr());
+            }
             IOURING.SetValue(IO_URING_HOLDER.Addr());
         } else {
+            KERNEL_PAGETABLE.Init(PageTables::Init(CurrentUserTable()));
             SHARESPACE.SetSignalHandlerAddr(SignalHandler as u64);
             PAGE_MGR.SetValue(SHARESPACE.GetPageMgrAddr());
             IOURING.SetValue(SHARESPACE.GetIOUringAddr());
+            interrupt::InitSingleton();
         }
         LOADER.Init(Loader::default());
         KERNEL_STACK_ALLOCATOR.Init(AlignedAllocator::New(
@@ -661,6 +671,33 @@ pub extern "C" fn rust_main(
             }
             if shareSpaceAddr < (CCMode::Max as u64) {
                 ENABLE_CC.store(true, Ordering::Release);
+                match CCMode::from(shareSpaceAddr) {
+                    #[cfg(feature = "snp")]
+                    CCMode::SevSnp => {
+                        IS_SEV_SNP.store(true, Ordering::Release);
+                        LOG_AVAILABLE.store(false, Ordering::Release);
+                        for i in (MemoryDef::PHY_LOWER_ADDR..MemoryDef::IO_HEAP_END)
+                            .step_by(MemoryDef::PAGE_SIZE as usize)
+                        {
+                            let _ret = pvalidate(VirtAddr::new(i), PvalidateSize::Size4K, true);
+                        }
+                        unsafe {
+                            KERNEL_PAGETABLE
+                                .Init(PageTables::Init(CurrentKernelTable() & 0xffff_ffff_ffff));
+                        }
+
+                        //set idt first here cpuid is interceptted in cc
+                        unsafe {
+                            interrupt::InitSingleton();
+                        }
+                        interrupt::init();
+                        set_cbit_mask();
+                        PAGE_MGR.SetValue(PAGE_MGR_HOLDER.Addr());
+                        // ghcb convert shared memory
+                        InitShareMemory();
+                    }
+                    _ => (),
+                }
                 GLOBAL_ALLOCATOR.InitSharedAllocator_cc();
                 let size = core::mem::size_of::<ShareSpace>();
                 let shared_space = unsafe {
@@ -678,6 +715,10 @@ pub extern "C" fn rust_main(
             SHARESPACE.SetValue(shareSpaceAddr);
         }
         SingletonInit();
+
+        #[cfg(feature = "snp")]
+        LOG_AVAILABLE.store(true, Ordering::Release);
+        ///// LOGGING NOT AVAILABLE BEFORE THIS POINT /////
         debug!("init singleton finished");
         SetVCPCount(vcpuCnt as usize);
         #[cfg(feature = "cc")]
@@ -703,7 +744,14 @@ pub extern "C" fn rust_main(
         // release other vcpus
         HyperCall64(qlib::HYPERCALL_RELEASE_VCPU, 0, 0, 0, 0);
     } else {
+        #[cfg(feature = "cc")]
+        x86_64::instructions::tlb::flush_all();
+        interrupt::init();
         set_cpu_local(id);
+        #[cfg(feature = "snp")]
+        if IS_SEV_SNP.load(Ordering::Acquire){
+            InitGhcb(id as usize);
+        }
         //PerfGoto(PerfType::Kernel);
     }
 
@@ -715,13 +763,17 @@ pub extern "C" fn rust_main(
         RegisterSysCall(syscall_entry as u64);
     }
 
+    #[cfg(feature = "snp")]
+    //Different from normal vm, mxcsr will not be set by kvm, should set it mannualy
+    if IS_SEV_SNP.load(Ordering::Acquire){
+       let mxcsr_value = MXCSR_DEFAULT;
+       ldmxcsr(&mxcsr_value as *const _ as u64);
+    }
+
     #[cfg(target_arch = "aarch64")]
     {
         RegisterExceptionTable(vector_table as u64);
     }
-
-    //interrupts::init_idt();
-    interrupt::init();
 
     /***************** can't run any qcall before this point ************************************/
 
