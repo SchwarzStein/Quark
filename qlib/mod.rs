@@ -42,6 +42,14 @@ macro_rules! cfg_cc {
     }
 }
 
+macro_rules! cfg_snp {
+    ($($item:item)*) => {
+        $(
+            #[cfg (feature = "snp")]
+            $item
+        )*
+    }
+}
 //#[macro_use]
 //pub mod macros;
 pub mod addr;
