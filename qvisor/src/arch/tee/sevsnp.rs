@@ -32,7 +32,7 @@ static mut DUMMY_U64: u64 = 0u64;
 
 pub struct SevSnp<'a> {
     kvm_exits_list: [VcpuExit<'a>; 1],
-    hypercalls_list: [u16; 1],
+    hypercalls_list: [u16; 2],
     pub cc_mode: CCMode,
     pub share_space_table_addr: Option<u64>,
     pub page_allocator_addr: u64,
@@ -54,7 +54,7 @@ impl ConfCompExtension for SevSnp<'_> {
             kvm_exits_list: [VcpuExit::VMGExit(Vmgexit::Psc(0, unsafe {
                 &mut DUMMY_U64
             }))],
-            hypercalls_list: [qlib::HYPERCALL_SHARESPACE_INIT],
+            hypercalls_list: [qlib::HYPERCALL_SHARESPACE_INIT, qlib::HYPERCALL_TEST],
             share_space_table_addr: None,
             page_allocator_addr: _page_allocator_base_addr
                 .expect("Exptected address of the page allocator - found None"),
@@ -124,6 +124,9 @@ impl ConfCompExtension for SevSnp<'_> {
         _exit = match hypercall {
             qlib::HYPERCALL_SHARESPACE_INIT => {
                 self._handle_hcall_shared_space_init(data, arg0, arg1, arg2, arg3, vcpu_id)?
+            }
+            qlib::HYPERCALL_TEST => {
+                self._handle_hcall_test(data, arg0, arg1, arg2, arg3, vcpu_id)?
             }
             _ => false,
         };
@@ -199,6 +202,20 @@ impl SevSnp<'_> {
             info!("Vcpu: finished shared-space initialization.");
         }
 
+        Ok(false)
+    }
+
+    pub(self) fn _handle_hcall_test(
+        &self,
+        data: &[u8],
+        arg0: u64,
+        arg1: u64,
+        arg2: u64,
+        arg3: u64,
+        vcpu_id: usize,
+    ) -> Result<bool, Error> {
+        let a = data as *const _ as *const u16;
+        info!("GHCB IO TEST data: {:x}", unsafe { *a });
         Ok(false)
     }
 
