@@ -131,6 +131,10 @@ impl VmType for SevSnp {
     fn post_init_upadate(&mut self) -> Result<(), Error> {
         todo!()
     }
+    
+    fn vm_vcpu_post_initialization(&self, vcpus: &Vec<Arc<ArchVirtCpu>>) -> Result<(), Error> {
+        todo!()
+    }
 }
 
 impl CpuidPage {
