@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::cmp::Ordering;
+use std::os::fd::AsRawFd;
 
 use crate::qlib::linux_def::MemoryDef;
 use crate::runc::runtime::vm::VirtualMachine;
@@ -22,7 +23,7 @@ use crate::runc::runtime::vm_type::emulcc::VmCcEmul;
 use crate::sharepara::ShareParaPage;
 use crate::VMS;
 use crate::{arch::ConfCompExtension, qlib, QUARK_CONFIG};
-use kvm_ioctls::VcpuExit;
+use kvm_ioctls::{VcpuExit, VmFd, Kvm};
 use qlib::config::CCMode;
 use qlib::common::Error;
 
@@ -32,12 +33,18 @@ pub struct EmulCc<'a> {
     pub cc_mode: CCMode,
     pub share_space_table_addr: Option<u64>,
     pub page_allocator_addr: u64,
+    pub kvm_fd: i32,
+    pub vm_fd: i32,
 }
 
 #[cfg(feature = "cc")]
 impl ConfCompExtension for EmulCc<'_> {
-    fn initialize_conf_extension(_share_space_table_addr: Option<u64>,
-        _page_allocator_base_addr: Option<u64>) -> Result<Box<dyn ConfCompExtension>, crate::qlib::common::Error>
+    fn initialize_conf_extension(
+        _share_space_table_addr: Option<u64>,
+        _page_allocator_base_addr: Option<u64>,
+        kvm_fd: &Kvm,
+        vm_fd: &VmFd,
+    ) -> Result<Box<dyn ConfCompExtension>, crate::qlib::common::Error>
         where Self: Sized {
         let _cc_mode = QUARK_CONFIG.lock().CCMode;
         let _self: Box<dyn ConfCompExtension> = Box::new(EmulCc{
@@ -47,6 +54,8 @@ impl ConfCompExtension for EmulCc<'_> {
             page_allocator_addr: _page_allocator_base_addr
                 .expect("Exptected address of the page allocator - found None"),
             cc_mode: _cc_mode,
+            kvm_fd: kvm_fd.as_raw_fd(),
+            vm_fd: vm_fd.as_raw_fd(),
         });
         Ok(_self)
     }
@@ -76,7 +85,7 @@ impl ConfCompExtension for EmulCc<'_> {
         }
     }
 
-    fn handle_kvm_exit(&self, kvm_exit: &kvm_ioctls::VcpuExit, vcpu_id: usize) -> Result<bool, crate::qlib::common::Error> {
+    fn handle_kvm_exit(&self, kvm_exit: &mut kvm_ioctls::VcpuExit, vcpu_id: usize, vm_fd: &VmFd) -> Result<bool, crate::qlib::common::Error> {
         Ok(false)
     }
 
@@ -94,6 +103,14 @@ impl ConfCompExtension for EmulCc<'_> {
 
     fn confidentiality_type(&self) -> CCMode {
         return self.cc_mode;
+    }
+
+    fn get_kvm_fd(&self) -> i32 {
+        return self.kvm_fd;
+    }
+    
+    fn get_vm_fd(&self) -> i32 {
+        return self.vm_fd;
     }
 }
 

@@ -17,7 +17,7 @@ pub mod kvm_vcpu;
 use kvm_ioctls::{Kvm, VcpuExit, VmFd};
 use kvm_bindings::{kvm_regs, kvm_sregs, kvm_xcrs, KVM_MAX_CPUID_ENTRIES};
 use libc::gettid;
-use std::{convert::TryInto, mem::size_of, sync::atomic::{fence, Ordering}};
+use std::{convert::TryInto, mem::size_of, sync::atomic::{fence, Ordering}, os::fd::FromRawFd};
 
 use crate::{amd64_def::{SegmentDescriptor, SEGMENT_DESCRIPTOR_ACCESS, SEGMENT_DESCRIPTOR_EXECUTE,
             SEGMENT_DESCRIPTOR_PRESENT, SEGMENT_DESCRIPTOR_WRITE}, arch::{tee::{emulcc::EmulCc,
@@ -34,6 +34,12 @@ use crate::GLOCK;
 use qlib::{linux_def::MemoryDef, common::Error, qmsg::qcall::{Print, QMsg},
     GetTimeCall, linux::time::Timespec, VcpuFeq,
     cpuid::XSAVEFeature::{XSAVEFeatureBNDREGS, XSAVEFeatureBNDCSR}};
+#[cfg(feature = "snp")]
+use crate::arch::tee::sevsnp::SevSnp;
+#[cfg(feature = "snp")]
+use crate::qlib::cc::sev_snp::C_BIT_MASK;
+#[cfg(feature = "snp")]
+use qlib::kernel::Kernel::IS_SEV_SNP;
 
 pub struct X86_64VirtCpu {
     pub gtd_addr: u64,
@@ -82,11 +88,15 @@ impl VirtCpu for X86_64VirtCpu {
         let _conf_comp_ext = match conf_extension {
             CCMode::None =>
                 NonConf::initialize_conf_extension(share_space_table_addr,
-                page_allocator_base_addr)?,
+                page_allocator_base_addr, kvm.unwrap(), vm_fd)?,
             #[cfg(feature = "cc")]
             CCMode::Normal | CCMode::NormalEmu =>
                 EmulCc::initialize_conf_extension(share_space_table_addr,
-                page_allocator_base_addr)?,
+                page_allocator_base_addr, kvm.unwrap(), vm_fd)?,
+            #[cfg(feature = "snp")]
+            CCMode::SevSnp => 
+                SevSnp::initialize_conf_extension(share_space_table_addr,
+                page_allocator_base_addr, kvm.unwrap(), vm_fd)?,
             _ => {
                 return Err(Error::InvalidArgument("Create vcpu failed - bad CCMode type"
                     .to_string()));
@@ -428,6 +438,12 @@ impl X86_64VirtCpu {
 
         vcpu_sregs.cr0 = CR0_PE | CR0_AM | CR0_ET | CR0_PG | CR0_NE;
         vcpu_sregs.cr3 = VMS.lock().pageTables.GetRoot();
+
+        #[cfg(feature = "snp")]
+        if IS_SEV_SNP.load(Ordering::Acquire) {
+            vcpu_sregs.cr3 = VMS.lock().pageTables.GetRoot() | C_BIT_MASK.load(Ordering::Acquire);
+        }
+
         vcpu_sregs.cr4 = CR4_PSE | CR4_PAE | CR4_PGE | CR4_OSFXSR
             | CR4_OSXMMEXCPT | CR4_FSGSBASE | CR4_OSXSAVE;
 
@@ -544,6 +560,8 @@ impl X86_64VirtCpu {
 
     fn _run(&self) -> Result<(), Error> {
         let mut exit_loop: bool = false;
+        let kvm = unsafe { Kvm::from_raw_fd(self.conf_comp_extension.get_kvm_fd()) };
+        let vm_fd = unsafe { kvm.create_vmfd_from_rawfd(self.conf_comp_extension.get_vm_fd()).unwrap() };
         loop {
             if !vm::IsRunning() {
                 break;
@@ -552,7 +570,7 @@ impl X86_64VirtCpu {
             self.vcpu_base.state.store(KVMVcpuState::GUEST as u64, Ordering::Release);
             fence(Ordering::Acquire);
 
-            let kvm_ret = match self.vcpu_base.vcpu_fd.run() {
+            let mut kvm_ret = match self.vcpu_base.vcpu_fd.run() {
                 Ok(ret) => ret,
                 Err(e) => {
                     if e.errno() == SysErr::EINTR {
@@ -611,7 +629,7 @@ impl X86_64VirtCpu {
                         .expect("VM run failed - cannot handle hypercall correctly.");
                 }
             } else if self.conf_comp_extension.should_handle_kvm_exit(&kvm_ret) {
-                exit_loop = self.conf_comp_extension.handle_kvm_exit(&kvm_ret, self.vcpu_base.id)?;
+                exit_loop = self.conf_comp_extension.handle_kvm_exit(&mut kvm_ret, self.vcpu_base.id, &vm_fd)?;
             } else {
                 exit_loop = self.default_kvm_exit_handler(kvm_ret)?;
             }
