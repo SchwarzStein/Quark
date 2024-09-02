@@ -18,7 +18,7 @@ use crate::qlib::linux_def::MemoryDef;
 use crate::runc::runtime::vm::VirtualMachine;
 use crate::runc::runtime::vm_type::VmType;
 use crate::runc::runtime::vm_type::emulcc::VmCcEmul;
-//#[cfg(feature = "cc")]
+#[cfg(feature = "cc")]
 use crate::sharepara::ShareParaPage;
 use crate::VMS;
 use crate::{arch::ConfCompExtension, qlib, QUARK_CONFIG};

@@ -187,6 +187,7 @@ impl VirtualMachine {
         PerfGoto(PerfType::Other);
         let (vm_type, kernel_elf) = match cc_mode {
             CCMode::None => VmNormal::init(Some(&args))?,
+            #[cfg(feature = "cc")]
             CCMode::Normal | CCMode::NormalEmu =>
                 VmCcEmul::init(Some(&args))?,
             _ => panic!("Unhandled type."),

@@ -82,6 +82,7 @@ pub mod util {
         let offset = match confidentiality_type {
             CCMode::None | CCMode::Normal =>
                 0,
+            #[cfg(feature = "cc")]
             CCMode::NormalEmu =>
                 MemoryDef::UNIDENTICAL_MAPPING_OFFSET,
             _ => panic!(""),

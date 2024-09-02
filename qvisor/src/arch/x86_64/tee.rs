@@ -18,7 +18,6 @@ use crate::arch::tee::NonConf;
 use crate::qlib::common::Error;
 use crate::qlib::config::CCMode;
 use crate::qlib::linux_def::MemoryDef;
-use crate::sharepara::ShareParaPage;
 
 impl NonConf<'_> {
     pub(in crate::arch) fn _set_cpu_registers(&self, vcpu_fd: &VcpuFd) -> Result<(), Error> {
