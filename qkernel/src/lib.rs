@@ -616,8 +616,13 @@ pub extern "C" fn rust_main(
         //if in any cc machine, shareSpaceAddr is reused as CCMode
         #[cfg(feature = "cc")]
         {
+            if shareSpaceAddr > CCMode::Max as u64 {
+                GLOBAL_ALLOCATOR.InitPrivateAllocator(CCMode::None);
+                GLOBAL_ALLOCATOR.InitSharedAllocator();
+            } else {
             GLOBAL_ALLOCATOR.InitPrivateAllocator(CCMode::from(shareSpaceAddr));
             GLOBAL_ALLOCATOR.InitSharedAllocator();
+            }
             if shareSpaceAddr < (CCMode::Max as u64) {
                 ENABLE_CC.store(true, Ordering::Release);
                 GLOBAL_ALLOCATOR.InitSharedAllocator_cc();

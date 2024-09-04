@@ -286,23 +286,40 @@ pub fn HyperCall64(type_: u16, para1: u64, para2: u64, para3: u64, para4: u64) {
             )
         }
     }
-    #[cfg(feature = "cc")] {
-        /// We can not query which is the current vCpu before the share space is initialized.
-        let vcpu_id = if type_ != crate::qlib::HYPERCALL_SHARESPACE_INIT {
-            GetVcpuId()
-        } else {
-             0
-        };
-        _hcall_prepare_shared_buff(vcpu_id, para1, para2, para3, para4);
-        let dummy_data: u8 = 0;
-        unsafe {
-            let data: u8 = 0;
-            asm!("
+    #[cfg(feature = "cc")]
+    {
+        if is_cc_enabled() {
+            /// We can not query which is the current vCpu before the share space is initialized.
+            let vcpu_id = if type_ != crate::qlib::HYPERCALL_SHARESPACE_INIT {
+                GetVcpuId()
+            } else {
+                0
+            };
+            _hcall_prepare_shared_buff(vcpu_id, para1, para2, para3, para4);
+            let dummy_data: u8 = 0;
+            unsafe {
+                let data: u8 = 0;
+                asm!("
                 out dx, al
                 ",
-                in("dx") type_,
-                in("al") dummy_data,
-            )
+                    in("dx") type_,
+                    in("al") dummy_data,
+                )
+            }
+        } else {
+            unsafe {
+                let data: u8 = 0;
+                asm!("
+                    out dx, al
+                    ",
+                    in("dx") type_,
+                    in("al") data,
+                    in("rsi") para1,
+                    in("rcx") para2,
+                    in("rdi") para3,
+                    in("r10") para4
+                )
+            }
         }
     }
 }

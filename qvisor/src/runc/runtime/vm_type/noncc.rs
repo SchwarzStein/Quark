@@ -62,7 +62,7 @@ impl VmType for VmNormal {
             shared_heap_mem_size: MemoryDef::HEAP_SIZE,
             kernel_base_host: MemoryDef::PHY_LOWER_ADDR,
             kernel_base_guest: MemoryDef::PHY_LOWER_ADDR,
-            kernel_init_region_size: MemoryDef::KERNEL_MEM_INIT_REGION_SIZE * MemoryDef::ONE_GB,
+            kernel_init_region_size: MemoryDef::KERNEL_MEM_INIT_REGION_SIZE * MemoryDef::ONE_GB + MemoryDef::HOST_INIT_HEAP_SIZE,
             file_map_area_base_host: MemoryDef::FILE_MAP_OFFSET,
             file_map_area_base_guest: MemoryDef::FILE_MAP_OFFSET,
             file_map_area_size: MemoryDef::FILE_MAP_SIZE,
@@ -110,6 +110,8 @@ impl VmType for VmNormal {
         kernel_elf: KernelELF,
         args: Args,
     ) -> Result<VirtualMachine, Error> {
+        #[cfg(feature = "cc")]
+        crate::GLOBAL_ALLOCATOR.InitPrivateAllocator();
         *ROOT_CONTAINER_ID.lock() = args.ID.clone();
         if QUARK_CONFIG.lock().PerSandboxLog {
             let sandbox_name = match args
@@ -250,6 +252,8 @@ impl VmType for VmNormal {
         _share_space_addr: Option<u64>,
         _has_global_mem_barrierr: Option<bool>,
     ) -> Result<(), Error> {
+        #[cfg(feature = "cc")]
+        crate::GLOBAL_ALLOCATOR.InitSharedAllocator();
         SHARE_SPACE_STRUCT
             .lock()
             .Init(cpu_count, control_sock, rdma_svc_cli_sock, pod_id);
@@ -299,8 +303,9 @@ impl VmType for VmNormal {
         {
             let mut cap: kvm_enable_cap = Default::default();
             cap.cap = kvm_bindings::KVM_CAP_X86_DISABLE_EXITS;
-            cap.args[0] = (kvm_bindings::KVM_X86_DISABLE_EXITS_HLT
-                | kvm_bindings::KVM_X86_DISABLE_EXITS_MWAIT) as u64;
+            //cap.args[0] = (kvm_bindings::KVM_X86_DISABLE_EXITS_HLT
+            //    | kvm_bindings::KVM_X86_DISABLE_EXITS_MWAIT) as u64;
+            cap.args[0] = kvm_bindings::KVM_X86_DISABLE_EXITS_MWAIT as u64;
             vm_fd.enable_cap(&cap).unwrap();
         }
 
