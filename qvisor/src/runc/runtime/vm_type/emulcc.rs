@@ -15,16 +15,15 @@
 use std::{os::fd::FromRawFd, sync::{atomic::Ordering, Arc}};
 
 use hashbrown::HashMap;
-use kvm_bindings::kvm_enable_cap;
 use kvm_ioctls::{Cap, Kvm, VmFd};
 
-use crate::{arch::{tee::util::{adjust_addr_to_guest, adjust_addr_to_host, get_offset},
-            vm::vcpu::ArchVirtCpu}, elf_loader::KernelELF, kvm_vcpu::KVMVcpu, print::LOG,
+use crate::{arch::{tee::util::{adjust_addr_to_guest, adjust_addr_to_host},
+            vm::vcpu::ArchVirtCpu}, elf_loader::KernelELF, print::LOG,
             qlib::{addr::{Addr, PageOpts}, common::Error, kernel::{kernel::{futex, timer},
-            vcpu::CPU_LOCAL, SHARESPACE, arch::__arch::mm::pagetable}, linux_def::MemoryDef,
-            pagetable::PageTables, pagetable::HugePageType, ShareSpace},
-            runc::runtime::{loader::Args, vm::{self, VirtualMachine}}, tsot_agent::TSOT_AGENT,
-            CCMode, VMSpace, KERNEL_IO_THREAD, PMA_KEEPER, QUARK_CONFIG, ROOT_CONTAINER_ID,
+            vcpu::CPU_LOCAL, SHARESPACE}, linux_def::MemoryDef, pagetable::PageTables,
+            pagetable::HugePageType, ShareSpace}, runc::runtime::{loader::Args,
+            vm::{self, VirtualMachine}}, tsot_agent::TSOT_AGENT, CCMode, VMSpace,
+            KERNEL_IO_THREAD, PMA_KEEPER, QUARK_CONFIG, ROOT_CONTAINER_ID,
             SHARE_SPACE, URING_MGR, VMS};
 use crate::arch::VirtCpu;
 use super::{resources::{MemArea, MemLayoutConfig, VmResources, MemAreaType}, VmType};
@@ -236,8 +235,7 @@ impl VmType for VmCcEmul {
         PMA_KEEPER.InitHugePages();
         vms.pageTables = PageTables::New(&vms.allocator)?;
 
-        let mut page_opt = PageOpts::Zero();
-        page_opt = PageOpts::Kernel();
+        let mut page_opt = PageOpts::Kernel();
         let (_, kmem_base_guest, _) = self.vm_resources
             .mem_area_info(MemAreaType::KernelArea).unwrap();
         vms.KernelMapHugeTable(Addr(kmem_base_guest),
@@ -397,10 +395,6 @@ impl VmType for VmCcEmul {
         Ok(())
     }
 
-    fn post_memory_initialize(&mut self, vm: &mut VmFd) -> Result<(), Error> {
-        Ok(())
-    }
-
     fn vm_vcpu_initialize(&self, kvm: &Kvm, vm_fd: &VmFd, total_vcpus: usize, entry_addr: u64,
                         auto_start: bool, page_allocator_addr: Option<u64>,
                         share_space_addr: Option<u64>) -> Result<Vec<Arc<ArchVirtCpu>>, Error> {
@@ -426,11 +420,7 @@ impl VmType for VmCcEmul {
         Ok(vcpus)
     }
 
-    fn post_vm_initialize(&mut self, vm_fd: &mut VmFd) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn post_init_upadate(&mut self) -> Result<(), Error> {
-        Ok(())
+    fn get_type(&self) -> CCMode {
+        self.emul_cc_mode
     }
 }

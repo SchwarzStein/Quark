@@ -242,7 +242,7 @@ impl PageTables {
             let nPgdEntry = &mut (*nPt)[0];
             let nPudTbl = pagePool.AllocPage(true)? as *mut PageTable;
             let mut table = nPudTbl as u64;
-            tee::guest_physical_address_protect(&mut table, true);
+            tee::gpa_to_ipa(&mut table, true);
             #[cfg(target_arch = "x86_64")]
             nPgdEntry.set_addr(
                 PhysAddr::new(table),

@@ -24,7 +24,6 @@ use crate::{elf_loader::KernelELF, print::LOG, qlib, runc::runtime, tsot_agent::
 use addr::{Addr, PageOpts};
 use hashbrown::HashMap;
 use kernel::{kernel::futex, kernel::timer, task, KERNEL_STACK_ALLOCATOR, SHARESPACE};
-use kvm_bindings::kvm_enable_cap;
 use kvm_ioctls::{Cap, Kvm, VmFd};
 use pagetable::{AlignedAllocator, PageTables};
 use qlib::{addr, common::Error, kernel, linux_def::MemoryDef, pagetable};
@@ -242,8 +241,7 @@ impl VmType for VmNormal {
         PMA_KEEPER.InitHugePages();
         vms.pageTables = PageTables::New(&vms.allocator)?;
 
-        let mut page_opt = PageOpts::Zero();
-        page_opt = PageOpts::Kernel();
+        let mut page_opt = PageOpts::Kernel();
         let (_, kmem_base, _) = self.vm_resources.mem_area_info(KernelArea).unwrap();
         vms.KernelMapHugeTable(Addr(kmem_base),
             Addr(kmem_base + self.vm_resources.mem_layout.guest_mem_size),
@@ -380,15 +378,7 @@ impl VmType for VmNormal {
         Ok(vcpus)
     }
 
-    fn post_memory_initialize(&mut self, vm_fd: &mut VmFd) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn post_vm_initialize(&mut self, vm_fd: &mut VmFd) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn post_init_upadate(&mut self) -> Result<(), Error> {
-        Ok(())
+    fn get_type(&self) -> CCMode {
+        CCMode::None
     }
 }

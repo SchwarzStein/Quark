@@ -12,8 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::mem::size_of;
+
+use kvm_bindings::kvm_device_attr;
+use vmm_sys_util::ioctl;
+
 const KVM_IO: u32 = 0xAE;
 const KVM_MEM_GUEST_MEMFD: u32 = 1 << 2;
+
+pub const KVM_SET_DEVICE_ATTR: u64 = ioctl::ioctl_expr(
+    ioctl::_IOC_WRITE,
+    KVM_IO,
+    0xE1,
+    size_of::<kvm_device_attr>() as u32,
+) as u64;
+
+use vmm_sys_util::ioctl_ioc_nr;
+vmm_sys_util::ioctl_io_nr!(KVM_CHECK_EXTENSION, KVM_IO, 0x03);
 
 #[repr(C)]
 pub struct KvmUserSpaceMemoryRegion2 {
@@ -77,13 +92,12 @@ const KVM_SET_USER_MEMORY_REGION2: u64 = vmm_sys_util::ioctl::ioctl_expr(
 ) as u64;
 
 pub mod kvm_ioctl {
-
-use kvm_ioctls::VmFd;
-use vmm_sys_util::ioctl::ioctl_with_mut_ref;
-
-use crate::qlib::common::Error;
-
-use super::{KvmCreateGuestMemFd, KVM_CREATE_GUEST_MEMFD, KvmUserSpaceMemoryRegion2, KVM_SET_USER_MEMORY_REGION2};
+    use kvm_ioctls::{VmFd, Kvm};
+    use libc::c_ulong;
+    use vmm_sys_util::ioctl::ioctl_with_mut_ref;
+    use crate::qlib::common::Error;
+    use super::{KvmCreateGuestMemFd, KVM_CREATE_GUEST_MEMFD, KvmUserSpaceMemoryRegion2,
+        KVM_SET_USER_MEMORY_REGION2, KVM_CHECK_EXTENSION};
 
     pub fn kvm_create_guest_memfd(vm_fd: &VmFd, guest_memfd: &mut KvmCreateGuestMemFd)
         -> Result<u32, Error> {
@@ -109,5 +123,16 @@ use super::{KvmCreateGuestMemFd, KVM_CREATE_GUEST_MEMFD, KvmUserSpaceMemoryRegio
             return Err(Error::IOError(String::from("Kvm ioctl - failed")));
         }
         Ok(())
+    }
+
+    pub fn kvm_supports_extension(kvm_fd: &Kvm, extension: u32) -> u64 {
+        let ret = unsafe {
+            vmm_sys_util::ioctl::ioctl_with_val(kvm_fd, KVM_CHECK_EXTENSION(), extension as c_ulong)
+        };
+        if ret < 0 {
+            panic!("KVM: Failed to check extension:{} with error:{:?}",
+                extension, std::io::Error::last_os_error());
+        }
+        ret as u64
     }
 }

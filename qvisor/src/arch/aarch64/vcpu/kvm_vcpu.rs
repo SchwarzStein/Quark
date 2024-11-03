@@ -13,13 +13,14 @@
 // limitations under the License.
 
 #![allow(non_upper_case_globals)]
-use std::{clone, fmt};
+use std::fmt;
 
 use kvm_bindings::kvm_vcpu_events;
 use kvm_ioctls::VcpuFd;
 use crate::{KVMVcpu, qlib::common::Error, vmspace::VMSpace, qlib::backtracer};
 
 const _TCR_IPS_40BITS: u64 = 2 << 32; // PA=40
+const _TCR_IPS_42BITS: u64 = 3 << 32; //PA=42
 const _TCR_IPS_48BITS: u64 = 5 << 32; // PA=48
 const _TCR_T0SZ_OFFSET: u64 = 0;
 const _TCR_T1SZ_OFFSET: u64 = 16;
@@ -51,7 +52,7 @@ const _TCR_ORGN_WBWA: u64 = _TCR_ORGN0_WBWA |  _TCR_ORGN1_WBWA;
 const _TCR_SHARED: u64 = (3 << _TCR_SH0_SHIFT) | (3 << _TCR_SH1_SHIFT);
 const _TCR_CACHE_FLAGS: u64 = _TCR_IRGN_WBWA |  _TCR_ORGN_WBWA;
 pub const TCR_EL1_DEFAULT: u64 = _TCR_TXSZ_VA48 | _TCR_CACHE_FLAGS | _TCR_SHARED
-                                | _TCR_TG_FLAGS | _TCR_ASID16 | _TCR_IPS_40BITS;
+                                | _TCR_TG_FLAGS | _TCR_ASID16 | _TCR_IPS_42BITS;
 
 const _MT_DEVICE_nGnRnE: u64 = 0;
 const _MT_DEVICE_nGnRE: u64 = 1;
@@ -126,6 +127,7 @@ pub enum KvmAarch64Reg {
     MdscrEl1    = 0x6030000000138012,
     CntkctlEl1  = 0x603000000013c708,
     TpidrEl1    = 0x603000000013c684,
+    Mpidr       = 0x603000000013c005,
 }
 
 impl fmt::Display for KvmAarch64Reg {
@@ -145,7 +147,6 @@ impl Register {
             Register::Reg(x, y) => {
                 Some((*x, *y))
             },
-            _ => None
         };
         res
     }
@@ -154,12 +155,13 @@ impl Register {
 impl KVMVcpu {
     pub fn set_regs(vcpu_fd: &VcpuFd, reg_list: Vec<Register>) -> Result<(), Error> {
         for reg in reg_list.iter() {
-            if let Register::Reg(reg_addr, reg_val) = reg {
-                println!("VCPU: Set reg:{} - val:{:#x}",
-                    reg_addr.to_string(), *reg_val as u64);
-                vcpu_fd.set_one_reg(*reg_addr as u64, *reg_val)
-                    .map_err(|e| Error::IOError(
-                        format!("Failed to set register - error:{}",e.errno())))?;
+            match reg {
+                Register::Reg(reg_addr, reg_val) => {
+                    debug!("VCPU: Set reg:{} - val:{:#x}", reg_addr.to_string(), *reg_val as u64);
+                    vcpu_fd.set_one_reg(*reg_addr as u64, *reg_val)
+                        .map_err(|e| Error::IOError(
+                            format!("Failed to set register - error:{}",e.errno())))?;
+                }
             }
         }
         Ok(())

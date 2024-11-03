@@ -1882,7 +1882,6 @@ impl VMSpace {
                 return self.pageTables
                     .MapWith2MB(start, end, physical, flags, &mut self.allocator, true);
             }
-            _ => panic!("No HPage impl"),
         };
     }
 

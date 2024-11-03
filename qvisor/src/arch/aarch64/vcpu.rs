@@ -14,17 +14,17 @@
 
 pub mod kvm_vcpu;
 
-use kvm_bindings::{kvm_vcpu_init, KVM_ARM_VCPU_PSCI_0_2, KVM_ARM_VCPU_PTRAUTH_ADDRESS, KVM_ARM_VCPU_PTRAUTH_GENERIC};
-use kvm_ioctls::{Kvm, VcpuExit, VmFd};
+use kvm_bindings::{kvm_vcpu_init, KVM_ARM_VCPU_PSCI_0_2};
+use kvm_ioctls::{Kvm, VcpuExit, VmFd, Cap};
 use kvm_vcpu::{Register, KvmAarch64Reg::*};
 use libc::gettid;
 use crate::{arch::{tee::{NonConf, emulcc::EmulCc}, ConfCompExtension, VirtCpu},
             kvm_vcpu::{KVMVcpuState, SetExitSignal}, qlib::{self, common::Error,
             linux::time::Timespec, linux_def::{MemoryDef, SysErr}, qmsg::qcall::{Print, QMsg},
-            GetTimeCall, VcpuFeq, config::CCMode, task_mgr::TaskId}, runc::runtime::vm, syncmgr::SyncMgr, KVMVcpu, GLOCK,
-            KERNEL_IO_THREAD, SHARE_SPACE, VMS};
-use super::{vcpu::kvm_vcpu::*, tee::{realm::RealmCca, kvm}};
-use std::{sync::{atomic::Ordering, Arc}, vec::Vec};
+            GetTimeCall, VcpuFeq, config::CCMode, task_mgr::TaskId}, runc::runtime::vm,
+            syncmgr::SyncMgr, KVMVcpu, GLOCK, KERNEL_IO_THREAD, SHARE_SPACE, VMS};
+use super::{vcpu::kvm_vcpu::*, tee::{realm::RealmCca, kvm::{self, SMC_RSI_HOST_CALL}}};
+use std::{sync::atomic::Ordering, vec::Vec};
 
 pub struct Aarch64VirtCpu {
     tcr_el1: u64,
@@ -46,13 +46,14 @@ impl VirtCpu for Aarch64VirtCpu {
         page_allocator_base_addr: Option<u64>, share_space_table_addr: Option<u64>,
         auto_start: bool, stack_size: usize, _kvm: Option<&Kvm>, conf_extension: CCMode)
         -> Result<Self, Error> {
+        debug!("vCPU: create vcpu-{}", vcpu_id);
         let _vcpu_fd = vm_fd.create_vcpu(vcpu_id as u64)
-            .expect("Failed to create kvm-vcpu with ID:{vcpu_id:?}");
+            .expect("Failed to create KVM vcpu_fd.");
         let _ttbr0_el1 = VMS.lock().pageTables.GetRoot();
         let _vcpu_base = KVMVcpu::Init(vcpu_id, total_vcpus, entry_addr, stack_size,
             _vcpu_fd, auto_start)?;
 
-        let _conf_comp_ext = match conf_extension {
+        let mut _conf_comp_ext = match conf_extension {
             CCMode::None =>
                 NonConf::initialize_conf_extension(share_space_table_addr,
                 page_allocator_base_addr)?,
@@ -60,7 +61,7 @@ impl VirtCpu for Aarch64VirtCpu {
                 EmulCc::initialize_conf_extension(share_space_table_addr,
                 page_allocator_base_addr)?
             },
-            CCMode::Realm => {
+            CCMode::Cca => {
                 RealmCca::initialize_conf_extension(share_space_table_addr,
                 page_allocator_base_addr)?
             },
@@ -73,9 +74,18 @@ impl VirtCpu for Aarch64VirtCpu {
         let mut _kvi = kvm_vcpu_init::default();
         vm_fd.get_preferred_target(&mut _kvi)
             .map_err(|e|
-                Error::IOError((format!("Failed to find kvm target for vcpu - error:{:?}", e))))?;
-        _kvi.features[0] |= 1 << KVM_ARM_VCPU_PSCI_0_2;
-        _conf_comp_ext.set_vcpu_features(&mut _kvi);
+                Error::IOError(format!("Failed to find kvm target for vcpu - error:{:?}", e)))?;
+        let _kvm_fd = _kvm.unwrap();
+        if _kvm_fd.check_extension(Cap::ArmPsci02) == true {
+            _kvi.features[0] |= 1 << KVM_ARM_VCPU_PSCI_0_2;
+        } else {
+            info!("VMM: vCPU - KVM_CAP_ARM_PSCI_0_2 not supported.");
+        }
+
+        if _kvm_fd.check_extension(Cap::ArmPsci) == false && conf_extension == CCMode::Cca {
+            panic!("VMM: vCPU - KVM_CAP_ARM_PSCI not supported, need to for co-cpus.");
+        }
+        _conf_comp_ext.set_vcpu_features(vcpu_id, &mut _kvi);
 
         let _self = Self {
             tcr_el1: TCR_EL1_DEFAULT,
@@ -94,8 +104,8 @@ impl VirtCpu for Aarch64VirtCpu {
 
     fn vcpu_init(&self) -> Result<(), Error> {
         self.vcpu_base.vcpu_fd.vcpu_init(&self.kvi)
-            .map_err(|e| Error::IOError((format!("Failed to initialize with kvi - error:{:?}",
-                    e.errno()))))?;
+            .map_err(|e| Error::IOError(format!("Failed to initialize with kvi - error:{:?}",
+                    e.errno())))?;
         Ok(())
     }
 
@@ -108,7 +118,7 @@ impl VirtCpu for Aarch64VirtCpu {
         let sctlr_el1 = Register::Reg(SctlrEl1, self.sctlr_el1);
         let mut reg_list: Vec<Register> = vec![mair_el1, ttbr0_el1, cntkctl_el1,
                                         cpacr_el1, sctlr_el1, tcr_el1];
-        if self.conf_comp_extension.confidentiality_type() != CCMode::Realm {
+        if self.conf_comp_extension.confidentiality_type() != CCMode::Cca {
             KVMVcpu::set_regs(&self.vcpu_base.vcpu_fd, reg_list)?;
             return self.conf_comp_extension.set_sys_registers(&self.vcpu_base.vcpu_fd, None)
         } else {
@@ -117,6 +127,11 @@ impl VirtCpu for Aarch64VirtCpu {
         }
     }
 
+    /// QRealm ABI:
+    /// vCPU0: X7 is used to pass the base address where additional
+    ///     boot help information for the other vCPUs is placed.
+    /// vCPUX: for X > 0, PC is passed by vCPU0 on boot, all other
+    ///     X0..X5 are found in stack after Frame-5 (stack_base: Frame-0).
     fn initialize_cpu_registers(&self) -> Result<(), Error> {
         let pc = Register::Reg(PC, self.vcpu_base.entry);
         let x2 = Register::Reg(X2, self.vcpu_base.id as u64);
@@ -125,13 +140,42 @@ impl VirtCpu for Aarch64VirtCpu {
         let x4 = Register::Reg(X4, self.vcpu_base.vcpuCnt as u64);
         let x5 = Register::Reg(X5, self.vcpu_base.autoStart as u64);
         let mut reg_list = vec![pc, x2, x3, x4, x5];
-        if self.conf_comp_extension.confidentiality_type() != CCMode::Realm {
+        if self.conf_comp_extension.confidentiality_type() != CCMode::Cca {
             reg_list.push(Register::Reg(SpEl1, self.vcpu_base.topStackAddr));
+            KVMVcpu::set_regs(&self.vcpu_base.vcpu_fd, reg_list)?;
+            return self.conf_comp_extension.set_cpu_registers(&self.vcpu_base.vcpu_fd, None);
         } else {
             reg_list.push(Register::Reg(X6, self.vcpu_base.topStackAddr));
+            if self.vcpu_base.id == 0 {
+                KVMVcpu::set_regs(&self.vcpu_base.vcpu_fd, reg_list)?;
+                return self.conf_comp_extension.set_cpu_registers(&self.vcpu_base.vcpu_fd, None);
+            } else {
+                let _ = reg_list.remove(0);
+                return self.conf_comp_extension.set_cpu_registers(&self.vcpu_base.vcpu_fd,
+                    Some(reg_list));
+            }
         }
-        KVMVcpu::set_regs(&self.vcpu_base.vcpu_fd, reg_list)?;
-        self.conf_comp_extension.set_cpu_registers(&self.vcpu_base.vcpu_fd, None)
+    }
+
+    /// Prepare stack for the Guest if needed. The stack base address should be passed
+    /// as a Host address.
+    fn vcpu_populate_stack(stack_base: u64, _frames: Vec<(u64, u64)>) -> Result<(), Error> {
+        let new_base = stack_base - (_frames.len()
+            .wrapping_mul(std::mem::size_of::<u64>()) as u64);
+        info!("vCPU: Stack base(Host):{:#x}, new stack offset-guest:{:#x} - pushed elements:{}",
+            stack_base, new_base, _frames.len());
+        let stack = unsafe {
+            std::slice::from_raw_parts_mut(new_base as *mut u64, _frames.len())
+        };
+        let mut val: u64;
+        let mut pos: u64;
+        for i in  0.._frames.len() {
+            (val, pos) = _frames[i];
+            stack[pos as usize] = val;
+            debug!("Push stack - base:{:#0x}, slot:{}, - value:{:#x}",
+                stack_base, (_frames.len() - 1) as u64 - pos, val);
+        }
+        Ok(())
     }
 
     fn vcpu_init_finalize(&self) -> Result<(), Error> {
@@ -158,7 +202,7 @@ impl VirtCpu for Aarch64VirtCpu {
         self._run()
     }
 
-    fn default_hypercall_handler(&self, hypercall: u16, _data: &[u8], arg0: u64, arg1: u64,
+    fn default_hypercall_handler(&self, hypercall: u16, arg0: u64, arg1: u64,
         arg2: u64, arg3: u64) -> Result<bool, Error> {
         let id = self.vcpu_base.id;
         match hypercall {
@@ -369,6 +413,9 @@ impl VirtCpu for Aarch64VirtCpu {
                     interrupting.1.clear();
                 }
             },
+            VcpuExit::Hypercall => {
+                panic!("Received KVM_EXIT_HYPERCALL");
+            },
             r => {
                 error!("Panic: CPU[{}] Unexpected exit reason: {:?}", self.vcpu_base.id, r);
                 unsafe {
@@ -382,7 +429,7 @@ impl VirtCpu for Aarch64VirtCpu {
 
 impl Aarch64VirtCpu {
     fn _run(&self) -> Result<(), Error> {
-        let mut exit_loop: bool = false;
+        let mut exit_loop: bool;
         loop {
             if !vm::IsRunning() {
                 break;
@@ -407,24 +454,19 @@ impl Aarch64VirtCpu {
                 }
             };
             self.vcpu_base.state.store(KVMVcpuState::HOST as u64, Ordering::Release);
-            if let VcpuExit::MmioWrite(addr, data) = kvm_ret {
-                {
-                    let mut interrupting = self.vcpu_base.interrupting.lock();
-                    interrupting.0 = false;
-                    interrupting.1.clear();
-                }
-                let hypercall = (addr - MemoryDef::HYPERCALL_MMIO_BASE) as u16;
-                if hypercall > u16::MAX {
-                    panic!("cpu[{}] Received hypercall id max than 255", self.vcpu_base.id);
-                }
-                let (arg0, arg1, arg2, arg3) = self.conf_comp_extension
-                    .get_hypercall_arguments(&self.vcpu_base.vcpu_fd, self.vcpu_base.id)?;
+            let mut  hypercall: u16 = 0;
+            let mut arg0: u64 = 0;
+            let mut arg1: u64 = 0;
+            let mut arg2: u64 = 0;
+            let mut arg3: u64 = 0;
+            if self._hypercall_detected(&kvm_ret, &mut hypercall, &mut arg0, &mut arg1,
+                &mut arg2, &mut arg3) {
                 if self.conf_comp_extension.should_handle_hypercall(hypercall) {
-                    exit_loop = self.conf_comp_extension.handle_hypercall(hypercall, data, arg0,
+                    exit_loop = self.conf_comp_extension.handle_hypercall(hypercall, arg0,
                         arg1, arg2, arg3, self.vcpu_base.id)
                         .expect("VM run failed - cannot handle hypercall correctly.");
                 } else {
-                    exit_loop = self.default_hypercall_handler(hypercall, data, arg0, arg1,
+                    exit_loop = self.default_hypercall_handler(hypercall, arg0, arg1,
                         arg2, arg3)
                         .expect("VM run failed - cannot handle hypercall correctly.");
                 }
@@ -439,5 +481,56 @@ impl Aarch64VirtCpu {
         }
         info!("VM-Run stopped for id:{}", self.vcpu_base.id);
         Ok(())
+    }
+
+    fn _hypercall_detected(&self, vcpu_exit: &VcpuExit, hcall_id: &mut u16, arg0: &mut u64,
+        arg1: &mut u64, arg2: &mut u64, arg3: &mut u64) -> bool {
+        let ret: bool;
+        match vcpu_exit {
+            VcpuExit::MmioWrite(addr, _) => {
+                {
+                    let mut interrupting = self.vcpu_base.interrupting.lock();
+                    interrupting.0 = false;
+                    interrupting.1.clear();
+                }
+                *hcall_id = (addr - MemoryDef::HYPERCALL_MMIO_BASE) as u16;
+                if *hcall_id > u16::MAX {
+                    panic!("cpu[{}] Received hypercall id max than 255", self.vcpu_base.id);
+                }
+                (*arg0, *arg1, *arg2, *arg3) = self.conf_comp_extension
+                    .get_hypercall_arguments(&self.vcpu_base.vcpu_fd, self.vcpu_base.id)
+                    .expect("Failed to get hypercall arguments.");
+                    debug!("VMM: HCALL Arguments from Shared-Space: arg0:{:#0x}, arg1:{:#0x},\
+                        arg2:{:#0x}, arg3:{:#0x}", *arg0, *arg1, *arg2, *arg3);
+                ret = true;
+            },
+            VcpuExit::Hypercall => {
+                {
+                    let mut interrupting = self.vcpu_base.interrupting.lock();
+                    interrupting.0 = false;
+                    interrupting.1.clear();
+                }
+                let fid = self.vcpu_base.vcpu_fd.get_one_reg(X0 as u64).expect("Failed to get X0");
+                if fid as u32 == SMC_RSI_HOST_CALL {
+                    let req = self.vcpu_base.vcpu_fd.get_one_reg(X1 as u64)
+                        .expect("Failed to get X1");
+                    *hcall_id = (req - MemoryDef::HYPERCALL_MMIO_BASE) as u16;
+                    let x2 = self.vcpu_base.vcpu_fd.get_one_reg(X2 as u64).expect("GET x2 failed.");
+                    let x3 = self.vcpu_base.vcpu_fd.get_one_reg(X3 as u64).expect("GET x3 failed.");
+                    let x4 = self.vcpu_base.vcpu_fd.get_one_reg(X4 as u64).expect("GET x4 failed.");
+                    let x5 = self.vcpu_base.vcpu_fd.get_one_reg(X5 as u64).expect("GET x5 failed.");
+                    debug!("VMM: HCALL{} Arguments from RsiHostCall: arg0:{:#0x}, arg1:{:#0x},\
+                        arg2:{:#0x}, arg3:{:#0x}", *hcall_id, x2, x3, x4, x5);
+                    (*arg0, *arg1, *arg2, *arg3) = (x2, x3, x4, x5);
+                    ret = true;
+                } else {
+                    panic!("VMM: EXIT-HYPERCALL for unexpected reason - X0:{:#0x}.", fid);
+                }
+            },
+            _ => {
+                ret = false;
+            },
+        };
+        ret
     }
 }

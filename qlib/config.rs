@@ -148,7 +148,7 @@ pub enum CCMode {
     Normal,
     NormalEmu,
     SevSnp,
-    Realm,
+    Cca,
     Max = 100,
 }
 
@@ -159,7 +159,7 @@ impl CCMode {
             1 => CCMode::Normal,
             2 => CCMode::NormalEmu,
             3 => CCMode::SevSnp,
-            4 => CCMode::Realm,
+            4 => CCMode::Cca,
             100 => CCMode::Max,
             _ => panic!("Error: Illegal value for CCMode type."),
         }
@@ -167,7 +167,7 @@ impl CCMode {
 
     pub fn tee_backedup(cc_type: u64) -> bool {
         let res: bool = match Self::from(cc_type) {
-            CCMode::SevSnp | CCMode::Realm => { true },
+            CCMode::SevSnp | CCMode::Cca => { true },
             _ => { false },
         };
         res

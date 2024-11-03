@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::ops::DerefMut;
 use std::os::fd::FromRawFd;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -20,11 +19,13 @@ use std::sync::Arc;
 use hashbrown::HashMap;
 use kvm_bindings::kvm_enable_cap;
 use kvm_ioctls::{Cap, DeviceFd, Kvm, VmFd};
-use vmm_sys_util::ioctl::ioctl_with_mut_ref;
 
 use super::{resources::VmResources, VmType};
-use crate::arch::vm::tee::kvm::kvm_vm_arm_create_irq_chip;
-use crate::arch::vm::tee::kvm::kvm_vm_arm_create_its_device;
+use crate::arch::vm::kvm::kvm_ioctl::KVM_SMCCC_FILTER_ACTION;
+use crate::arch::vm::kvm::kvm_ioctl::kvm_arm_vm_smccc_filter;
+use crate::arch::vm::kvm::kvm_ioctl::kvm_vm_arm_create_irq_chip;
+use crate::arch::vm::kvm::kvm_ioctl::kvm_vm_arm_create_its_device;
+use crate::arch::vm::tee::kvm::SMC_RSI_HOST_CALL;
 use crate::arch::vm::tee::kvm::kvm_vm_arm_ipa_size;
 use crate::arch::vm::tee::kvm::kvm_vm_arm_rme_enable_cap;
 use crate::arch::vm::tee::kvm::kvm_vm_arm_rme_init_ipa_range;
@@ -32,53 +33,77 @@ use crate::arch::vm::tee::kvm::kvm_vm_arm_rme_populate_range;
 use crate::arch::vm::tee::kvm::KvmCapArmRmeConfigHash;
 use crate::arch::vm::tee::kvm::KvmCapArmRmeVm;
 use crate::arch::vm::tee::kvm::KVM_VM_TYPE_ARM_REALM;
-use crate::arch::vm::tee::kvm::KVM_ENABLE_CAP;
+use crate::arch::vm::tee::realm::RealmVcpuXBootHelpData;
+use crate::arch::vm::vcpu::kvm_vcpu::KvmAarch64Reg;
 use crate::arch::vm::vcpu::ArchVirtCpu;
 use crate::arch::VirtCpu;
+use crate::kvm_vcpu::AlignedAllocate;
+use crate::memmgr::MapOption;
 use crate::print::LOG;
 use crate::qlib::addr::{Addr, PageOpts};
 use crate::qlib::common::Error;
-use crate::qlib::kernel::arch::tee::TEE_ACTIVE;
-use crate::qlib::kernel::arch::tee::guest_physical_address_protect;
 use crate::qlib::kernel::kernel::{futex, timer};
 use crate::qlib::kernel::vcpu::CPU_LOCAL;
 use crate::qlib::kernel::SHARESPACE;
+use crate::qlib::pagetable;
 use crate::qlib::pagetable::PageTables;
-use crate::qlib::pagetable::{self, PageTableFlags};
 use crate::qlib::ShareSpace;
 use crate::runc::runtime::loader::Args;
 use crate::runc::runtime::vm_type::resources::MemArea;
 use crate::vmspace::tsot_agent::TSOT_AGENT;
 use crate::vmspace::VMSpace;
-use crate::{arch::tee::util::{adjust_addr_to_guest, adjust_addr_to_host}, elf_loader::KernelELF,
-            qlib::{config::CCMode, kernel::Kernel::{ENABLE_CC, IDENTICAL_MAPPING},
-            linux_def::MemoryDef}, runc::runtime::{vm::{self, VirtualMachine},
-            vm_type::resources::{MemAreaType, MemLayoutConfig}}};
-use crate::{KERNEL_IO_THREAD, PMA_KEEPER, QUARK_CONFIG, ROOT_CONTAINER_ID, SHARE_SPACE,
-            URING_MGR, VMS};
+use crate::{arch::tee::util::{adjust_addr_to_guest, adjust_addr_to_host},
+    elf_loader::KernelELF, qlib::{config::CCMode, kernel::Kernel::{ENABLE_CC,
+    IDENTICAL_MAPPING}, linux_def::MemoryDef}, runc::runtime::{vm::{self,
+    VirtualMachine}, vm_type::resources::{MemAreaType, MemLayoutConfig}},
+    KERNEL_IO_THREAD, PMA_KEEPER, QUARK_CONFIG, ROOT_CONTAINER_ID,
+    SHARE_SPACE, URING_MGR, VMS};
 
 pub mod realm {
-
     use kvm_bindings::kvm_userspace_memory_region;
     use kvm_ioctls::{DeviceFd, VmFd};
-
     use crate::arch::kvm::KvmUserSpaceMemoryRegion2;
-    use crate::arch::vm::tee::kvm::{
-        kvm_arm_rme_activate_realm, kvm_arm_vgic_init_finalize, KvmCapArmRmeMeasurementAlgo,
-        KVM_VM_TYPE_ARM_IPA_SIZE_DEFAULT, KVM_VM_TYPE_ARM_RPV_SIZE_BYTE,
-    };
+    use crate::arch::vm::kvm::kvm_ioctl::kvm_arm_vgic_init_finalize;
+    use crate::arch::vm::tee::kvm::{kvm_arm_rme_activate_realm,
+        KvmCapArmRmeMeasurementAlgo,
+        KVM_VM_TYPE_ARM_RPV_SIZE_BYTE};
     use crate::qlib::common::Error;
 
-    /// Values are arbitrary, suggested by another demo project.
     #[derive(Debug)]
     pub struct vGic3 {
         pub size: u64,
         pub distributor_base: u64,
-        pub redistributor_base: u64,
-        pub its_base: u64,
+        pub redistributor_base: Option<u64>,
+        pub its_base: Option<u64>,
         pub irq_lines: u64,
         pub vgic_fd: Option<DeviceFd>,
         pub its_fd: Option<DeviceFd>,
+    }
+
+    impl Default for vGic3 {
+        fn default() -> Self {
+            let _size = 0x2_0000; //2*64K
+            let _vgic_end = 0x200_0000;
+            let _dist_base = _vgic_end - _size;
+            Self {
+                size: _size,
+                distributor_base: _dist_base,
+                redistributor_base: None,
+                its_base: None,
+                irq_lines: 64,
+                vgic_fd: None,
+                its_fd: None,
+            }
+        }
+    }
+
+    impl vGic3 {
+        pub fn adjuct_redist_base(&mut self, cpu_count: usize) {
+            let _redist_base = self.distributor_base - cpu_count as u64 * self.size;
+            let _its_base = _redist_base - cpu_count as u64 * self.size;
+            self.redistributor_base.replace(_redist_base);
+            self.its_base.replace(_its_base);
+        }
     }
 
     #[derive(Debug)]
@@ -96,25 +121,6 @@ pub mod realm {
         }
     }
 
-    impl Default for vGic3 {
-        fn default() -> Self {
-            let _size = 0x2_0000;
-            let _vgic_end = 0x200_0000;
-            let _dist_base = _vgic_end - _size;
-            let _redist_base = _dist_base - _size;
-            let _its_base = _redist_base - _size;
-            Self {
-                size: _size,
-                distributor_base: _dist_base,
-                redistributor_base: _redist_base,
-                its_base: _its_base,
-                irq_lines: 64,
-                vgic_fd: None,
-                its_fd: None,
-            }
-        }
-    }
-
     #[derive(Debug)]
     pub struct Realm {
         pub ipa_size: u64,
@@ -128,7 +134,7 @@ pub mod realm {
     impl Default for Realm {
         fn default() -> Self {
             Self {
-                ipa_size: KVM_VM_TYPE_ARM_IPA_SIZE_DEFAULT,
+                ipa_size: Self::QUARK_DEFAULT_REALM_IPA_SIZE,
                 rpv_token: [0u8; KVM_VM_TYPE_ARM_RPV_SIZE_BYTE as usize],
                 vgic3: vGic3::default(),
                 sve: None,
@@ -139,6 +145,7 @@ pub mod realm {
     }
 
     impl Realm {
+        const QUARK_DEFAULT_REALM_IPA_SIZE: u64 = 41;
         pub fn vgic_init_finalize(&self) -> Result<(), Error> {
             kvm_arm_vgic_init_finalize(self.vgic3.vgic_fd.as_ref(), self.vgic3.irq_lines)
         }
@@ -147,31 +154,16 @@ pub mod realm {
             kvm_arm_rme_activate_realm(vm_fd)
         }
 
-        pub fn set_realm_memory(
-            &mut self,
-            vm_fd: &VmFd,
-            _slot: u32,
-            _guest_start: u64,
-            _userspace_address: u64,
-            _size: u64,
-            protected: bool,
-        ) -> Result<(), Error> {
-            info!(
-                "MemRegion - Slot:{}, Guest-phyAddr:{:#x}, host-VA:{:#x}, page mmap-size:{} MB",
+        pub fn set_realm_memory(&mut self, vm_fd: &VmFd, _slot: u32, _guest_start: u64,
+            _userspace_address: u64, _size: u64, protected: bool) -> Result<(), Error> {
+            info!("VMM: Set MemRegion - Slot:{}, Guest-phyAddr:{:#x}, host-VA:{:#x}, page mmap-size:{} MB",
                 _slot, _guest_start, _userspace_address, _size >> 20);
             if protected {
                 let mut guest_mem = crate::arch::kvm::KvmCreateGuestMemFd::new(_size, 0);
                 let _guest_memfd =
                     crate::arch::kvm::kvm_ioctl::kvm_create_guest_memfd(vm_fd, &mut guest_mem)?;
-                let mut _region = KvmUserSpaceMemoryRegion2::new(
-                    _slot,
-                    0,
-                    _guest_start,
-                    _size,
-                    _userspace_address,
-                    0,
-                    _guest_memfd,
-                );
+                let mut _region = KvmUserSpaceMemoryRegion2::new(_slot, 0, _guest_start, _size,
+                    _userspace_address, 0, _guest_memfd);
                 crate::arch::kvm::kvm_ioctl::kvm_set_user_memory_region2(vm_fd, &mut _region)?;
             } else {
                 let _region = kvm_userspace_memory_region {
@@ -183,11 +175,8 @@ pub mod realm {
                 };
                 unsafe {
                     vm_fd.set_user_memory_region(_region).map_err(|e| {
-                        Error::IOError(format!(
-                            "Failed to set kvm slot-memory region :{} - error:{:?}",
-                            _region.slot, e
-                        ))
-                    })?;
+                        Error::IOError(format!("Failed to set kvm slot-memory region :{}\
+                            - error:{:?}", _region.slot, e))})?;
                 }
             }
             Ok(())
@@ -215,10 +204,10 @@ impl VmType for VmCcRealm {
         Self: Sized,
     {
         ENABLE_CC.store(true, Ordering::Release);
-        TEE_ACTIVE.store(true, Ordering::Release);
+        crate::qlib::kernel::arch::tee::set_tee_type(CCMode::Cca);
         let _pod_id = args.expect("VM creation expects arguments").ID.clone();
-        let default_min_vcpus = 1; //Preliminary functionality test
-        let _emul_type: CCMode = CCMode::Realm;
+        let default_min_vcpus = 3;
+        let _emul_type: CCMode = CCMode::Cca;
         IDENTICAL_MAPPING.store(false, Ordering::Release);
 
         let _kernel_bin_path = VirtualMachine::KERNEL_IMAGE.to_string();
@@ -232,7 +221,6 @@ impl VmType for VmCcRealm {
         elf.LoadVDSO(_vdso_bin_path.as_str())
             .expect("Failed to load vdso from given path.");
         let _vdso_address = adjust_addr_to_guest(elf.vdsoStart, _emul_type);
-        //TODO: Customize realm fields
         let mut _realm = Realm::default();
         let _kernel_img_size = (_vdso_address - _kernel_entry) + 3 * MemoryDef::PAGE_SIZE;
         let mut _mem_map: HashMap<MemAreaType, MemArea> = HashMap::new();
@@ -241,7 +229,7 @@ impl VmType for VmCcRealm {
             MemArea {
                 base_host: adjust_addr_to_host(MemoryDef::GUEST_PRIVATE_HEAP_OFFSET, _emul_type),
                 base_guest: MemoryDef::GUEST_PRIVATE_HEAP_OFFSET,
-                size: MemoryDef::GUEST_PRIVATE_HEAP_SIZE,//ONE_MB * 3 * 100,//NOTE: TEST - MemoryDef::GUEST_PRIVATE_HEAP_SIZE,
+                size: MemoryDef::GUEST_PRIVATE_HEAP_SIZE,
                 guest_private: true,
                 host_backedup: true,
             },
@@ -251,7 +239,7 @@ impl VmType for VmCcRealm {
             MemArea {
                 base_host: adjust_addr_to_host(MemoryDef::PHY_LOWER_ADDR, _emul_type),
                 base_guest: MemoryDef::PHY_LOWER_ADDR,
-                size: MemoryDef::QKERNEL_IMAGE_SIZE,//NOTE: TEST MemoryDef::FILE_MAP_OFFSET - MemoryDef::PHY_LOWER_ADDR,
+                size: MemoryDef::QKERNEL_IMAGE_SIZE,
                 guest_private: true,
                 host_backedup: true,
             },
@@ -259,9 +247,9 @@ impl VmType for VmCcRealm {
         _mem_map.insert(
             MemAreaType::FileMapArea,
             MemArea {
-                base_host: MemoryDef::FILE_MAP_OFFSET,
-                base_guest: MemoryDef::FILE_MAP_OFFSET,
-                size: MemoryDef::FILE_MAP_SIZE,
+                base_host: MemoryDef::HOST_FILE_MAP_ADDRESS,
+                base_guest: MemoryDef::HOST_FILE_MAP_ADDRESS,
+                size: MemoryDef::HOST_FILE_MAP_SIZE,
                 guest_private: false,
                 host_backedup: true,
             },
@@ -282,7 +270,7 @@ impl VmType for VmCcRealm {
                 base_host: u64::MAX,
                 base_guest: MemoryDef::HYPERCALL_MMIO_BASE,
                 size: MemoryDef::HYPERCALL_MMIO_SIZE,
-                guest_private: false, // Semantically this is shared
+                guest_private: false,
                 host_backedup: false,
             },
         );
@@ -313,11 +301,8 @@ impl VmType for VmCcRealm {
         Ok((box_type, elf))
     }
 
-    fn create_vm(
-        mut self: Box<Self>,
-        kernel_elf: KernelELF,
-        args: crate::runc::runtime::loader::Args,
-    ) -> Result<VirtualMachine, Error> {
+    fn create_vm(mut self: Box<Self>, kernel_elf: KernelELF, args: Args)
+        -> Result<VirtualMachine, Error> {
         crate::GLOBAL_ALLOCATOR.InitPrivateAllocator();
         *ROOT_CONTAINER_ID.lock() = args.ID.clone();
         if QUARK_CONFIG.lock().PerSandboxLog {
@@ -345,6 +330,7 @@ impl VmType for VmCcRealm {
             return Err(e);
         } else {
             info!("VM creation - VM-Space initialization finished.");
+            self.vm_resources.min_vcpu_amount = VMS.lock().vcpuCount;
         }
 
         {
@@ -368,28 +354,15 @@ impl VmType for VmCcRealm {
 
         self.vm_memory_initialize(&vm_fd)
             .expect("VM creation failed on memory initialization.");
-        self.post_memory_initialize(&mut vm_fd)
-            .expect("VM post memory initialization failed");
-        let (_, pheap, _) = self
-            .vm_resources
-            .mem_area_info(MemAreaType::PrivateHeapArea)
-            .unwrap();
-        let _vcpu_total = VMS.lock().vcpuCount;
-        let _auto_start = VMS.lock().args.as_ref().unwrap().AutoStart;
-        let __vcpu_total = 1;
-        let _vcpus = self
-            .vm_vcpu_initialize(
-                &_kvm,
-                &vm_fd,
-                __vcpu_total,
-                self.entry_address,
-                _auto_start,
-                Some(pheap),
-                None,
-            )
-            .expect("VM creation failed on vcpu creation.");
 
+        let (_, pheap, _) = self.vm_resources.mem_area_info(MemAreaType::PrivateHeapArea).unwrap();
+        let _auto_start = VMS.lock().args.as_ref().unwrap().AutoStart;
+        let _vcpus = self.vm_vcpu_initialize(&_kvm, &vm_fd, cpu_count, self.entry_address,
+                _auto_start, Some(pheap), None).expect("VM creation failed on vcpu creation.");
+
+        self.post_memory_initialize(&mut vm_fd).expect("VM post memory initialization failed");
         self.as_mut().post_vm_initialize(&mut vm_fd)?;
+
         let _vm_type: Box<dyn VmType> = self;
         let vm = VirtualMachine {
             kvm: _kvm,
@@ -402,11 +375,7 @@ impl VmType for VmCcRealm {
         Ok(vm)
     }
 
-    fn vm_space_initialize(
-        &self,
-        vcpu_count: usize,
-        args: crate::runc::runtime::loader::Args,
-    ) -> Result<(), Error> {
+    fn vm_space_initialize(&self, vcpu_count: usize, args: Args) -> Result<(), Error> {
         let vms = &mut VMS.lock();
         vms.vcpuCount = vcpu_count.max(self.vm_resources.min_vcpu_amount);
         vms.cpuAffinit = true;
@@ -414,108 +383,74 @@ impl VmType for VmCcRealm {
         vms.controlSock = args.ControlSock;
         vms.vdsoAddr = self.vdso_address;
         vms.pivot = args.Pivot;
-        if let Some(id) = args
-            .Spec
-            .annotations
-            .get(self.vm_resources.sandbox_uid_name.as_str())
-        {
+        if let Some(id) = args.Spec.annotations.get(
+            self.vm_resources.sandbox_uid_name.as_str()) {
             vms.podUid = id.clone();
         } else {
             info!("No sandbox id found in specification.");
         }
 
-        let (fmap_base_host, _, fmap_size) = self
-            .vm_resources
-            .mem_area_info(MemAreaType::FileMapArea)
-            .unwrap();
-        PMA_KEEPER.Init(fmap_base_host, fmap_size);
+        let(_, rfmap_address, rfmap_size) = self.vm_resources
+            .mem_area_info(MemAreaType::FileMapArea).unwrap();
+        let mut rfmap = MapOption::New();
+        rfmap.Addr(rfmap_address).Len(rfmap_size).ProtoRead()
+            .ProtoWrite().MapShare().MapAnan().MapFixed().MapLocked();
+        let mmap_addr = rfmap.MMap().expect("Failed to mmap");
+        assert_eq!(mmap_addr, rfmap_address,
+            "VMM: mmap Realm file-map area not in requested address");
+        PMA_KEEPER.Init(rfmap_address, rfmap_size);
         PMA_KEEPER.InitHugePages();
+
         vms.pageTables = PageTables::New(&vms.allocator)?;
 
-        let untrusted_range = PageTableFlags::new_with_bit_set(&self.realm.ipa_size - 1);
         let block_size = pagetable::HugePageType::MB2;
         for (_mt, _ma) in &self.vm_resources.mem_layout.mem_area_map {
             info!("VM: Creating mapping for {}", _mt.to_string());
             if *_mt == MemAreaType::HypercallMmioArea {
                 let mut page_opt = PageOpts::Zero();
-                page_opt
-                    .SetWrite()
-                    .SetGlobal()
-                    .SetPresent()
-                    .SetAccessed()
-                    .SetMMIOPage();
-                page_opt.set_option_x(&untrusted_range);
-                vms.KernelMap(
-                    Addr(_ma.base_guest),
-                    Addr(_ma.base_guest + _ma.size),
-                    Addr(_ma.base_guest),
-                    page_opt.Val(),
-                )?;
+                page_opt.SetWrite().SetGlobal().SetPresent()
+                    .SetAccessed().SetMMIOPage();
+                vms.KernelMap(Addr(_ma.base_guest), Addr(_ma.base_guest + _ma.size),
+                    Addr(_ma.base_guest), page_opt.Val())?;
             } else {
-                let mut entry_opt = PageOpts::Zero();
-                entry_opt = PageOpts::Kernel();
+                let mut entry_opt = PageOpts::KernelReadWrite();
                 entry_opt.SetBlock();
-
-                if _ma.guest_private == false {
-                    entry_opt.set_option_x(&untrusted_range);
-                }
-
-                if vms
-                    .KernelMapHugeTable(
-                        Addr(_ma.base_guest),
-                        Addr(_ma.base_guest + _ma.size),
-                        Addr(_ma.base_guest),
-                        entry_opt.Val(),
-                        block_size,
-                    )
-                    .unwrap()
-                    == false
-                {
-                    panic!("VM: Failed to map {}", _mt.to_string());
+                if vms.KernelMapHugeTable(Addr(_ma.base_guest),
+                    Addr(_ma.base_guest + _ma.size), Addr(_ma.base_guest),
+                    entry_opt.Val(), block_size).unwrap() == false {
+                        panic!("VM: Failed to map {}", _mt.to_string());
                 }
             }
         }
+        debug!("VMM: Create initial kernel page-table done.");
         vms.args = Some(args);
 
         Ok(())
     }
 
-    fn init_share_space(
-        vcpu_count: usize,
-        control_sock: i32,
-        rdma_svc_cli_sock: i32,
-        pod_id: [u8; 64],
-        share_space_addr: Option<u64>,
-        has_global_mem_barrier: Option<bool>,
-    ) -> Result<(), Error>
+    fn init_share_space(vcpu_count: usize, control_sock: i32, rdma_svc_cli_sock: i32,
+        pod_id: [u8; 64], share_space_addr: Option<u64>, _has_global_mem_barrier: Option<bool>)
+        -> Result<(), Error>
     where
         Self: Sized,
     {
         use core::sync::atomic;
-        crate::GLOBAL_ALLOCATOR
-            .vmLaunched
-            .store(true, atomic::Ordering::SeqCst);
+        crate::GLOBAL_ALLOCATOR.vmLaunched.store(true, atomic::Ordering::SeqCst);
+        debug!("VMM: Initilize shared space.");
         let shared_space_obj = unsafe {
             &mut *(share_space_addr.expect(
-                "Failed to initialize shared space in host\
-                            - shared-space-table address is missing",
-            ) as *mut ShareSpace)
-        };
+                "Failed to initialize shared space in host - \
+                    shared-space-table address is missing") as *mut ShareSpace)};
         let default_share_space_table = ShareSpace::New();
         let def_sh_space_tab_size = core::mem::size_of_val(&default_share_space_table);
         let sh_space_obj_size = core::mem::size_of_val(shared_space_obj);
-        assert!(
-            sh_space_obj_size == def_sh_space_tab_size,
-            "Guest passed shared-space address does not match to a shared-space object.\
+        assert!(sh_space_obj_size == def_sh_space_tab_size,
+            "Guest passed shared-space address does not match to a shared-space object. \
                 Expected obj size:{:#x} - found:{:#x}",
-            def_sh_space_tab_size,
-            sh_space_obj_size
-        );
+            def_sh_space_tab_size, sh_space_obj_size);
         unsafe {
-            core::ptr::write(
-                shared_space_obj as *mut ShareSpace,
-                default_share_space_table,
-            );
+            core::ptr::write(shared_space_obj as *mut ShareSpace,
+                default_share_space_table);
         }
 
         {
@@ -529,10 +464,7 @@ impl VmType for VmCcRealm {
         SHARESPACE.SetValue(share_space_addr.unwrap());
         URING_MGR.lock().Addfd(crate::print::LOG.Logfd()).unwrap();
         let share_space_ptr = SHARE_SPACE.Ptr();
-        URING_MGR
-            .lock()
-            .Addfd(share_space_ptr.HostHostEpollfd())
-            .unwrap();
+        URING_MGR.lock().Addfd(share_space_ptr.HostHostEpollfd()).unwrap();
         URING_MGR.lock().Addfd(control_sock).unwrap();
         KERNEL_IO_THREAD.Init(share_space_ptr.scheduler.VcpuArr[0].eventfd);
         unsafe {
@@ -556,14 +488,13 @@ impl VmType for VmCcRealm {
             panic!("Can not create VM - KVM_CAP_IMMEDIATE_EXIT is not supported.");
         }
         if kvm.check_extension(Cap::ArmVmIPASize) == false {
-            panic!(
-                "Can not create VM - Set IPA_SIZE:{} not supported.",
-                self.realm.ipa_size
-            );
+            panic!("Can not create VM - Set IPA_SIZE:{} not supported.",
+                self.realm.ipa_size);
         }
+        let ipa_limit = kvm.get_host_ipa_limit();
+        println!("VMM: Supported IPA-Limit:{}.", ipa_limit);
         let vm_type = KVM_VM_TYPE_ARM_REALM | kvm_vm_arm_ipa_size(self.realm.ipa_size);
-        let vm_fd = kvm
-            .create_vm_with_type(vm_type)
+        let vm_fd = kvm.create_vm_with_type(vm_type)
             .map_err(|e| Error::IOError(format!("Failed to crate a kvm-vm with error:{:?}", e)))?;
 
         self.configure_realm(&vm_fd);
@@ -581,10 +512,9 @@ impl VmType for VmCcRealm {
         let mut _slot = 1;
         for (_mt, _ma) in &self.vm_resources.mem_layout.mem_area_map {
             if _ma.host_backedup {
-                info!("MemRegion - {}", _mt.to_string());
-                self.realm
-                    .set_realm_memory(vm_fd, _slot, _ma.base_guest, _ma.base_host, _ma.size,
-                        _ma.guest_private).expect("VM: failed to register memory for Realm");
+                self.realm.set_realm_memory(vm_fd, _slot, _ma.base_guest,
+                    _ma.base_host, _ma.size, _ma.guest_private)
+                    .expect("VM: failed to register memory for Realm");
                 _slot += 1;
             }
         }
@@ -592,89 +522,91 @@ impl VmType for VmCcRealm {
     }
 
     fn post_memory_initialize(&mut self, vm_fd: &mut VmFd) -> Result<(), Error> {
+        let (_, gh_base, size) = self.vm_resources
+            .mem_area_info(MemAreaType::PrivateHeapArea).unwrap();
+        info!("VM: Init Realm-IPA range memory - GustPrivateHeap - GuestBase:{:#0x} - Size:{}MB.",
+            gh_base, size >> 20);
+        kvm_vm_arm_rme_init_ipa_range(vm_fd, gh_base, size)
+            .expect("VM: Failed to init IPA for region: Kernel");
+        info!("VM: Init Realm-IPA range memory - Kernel - GuestBase:{:#0x} - Size:{}MB.",
+            self.entry_address, self.kernel_img_size >> 20);
+        kvm_vm_arm_rme_init_ipa_range(vm_fd, self.entry_address, self.kernel_img_size)
+            .expect("VM: Failed to init IPA for region: Kernel");
+
         info!("VM: Populate Realm memory - Kernel.");
         kvm_vm_arm_rme_populate_range(vm_fd, self.entry_address, self.kernel_img_size)
             .expect("VM: Failed to populate for region: Kernel");
 
         info!("VM: Populate Realm memory - Guest Heap.");
-        let (_, gh_base, size) = self.vm_resources.mem_area_info(MemAreaType::PrivateHeapArea).unwrap();
         kvm_vm_arm_rme_populate_range(vm_fd, gh_base, size)
             .expect("VM: Failed to populate for region: Guest Heap");
 
-        //TODO: NOTE: Check if unpopulated Ram remains to be set declared as IPA-range
-       // for (_mt, _ma) in &self.vm_resources.mem_layout.mem_area_map {
-       //     if _ma.guest_private == false {
-       //         let mut ipa = _ma.base_guest;
-       //         guest_physical_address_protect(&mut ipa, false);
-       //         info!("VM: explicit mark as RAM region:{:?} - GPA:{:0x}, IPA:{:0x}, size:{}MB",
-       //             _mt.to_string(), _ma.base_guest, ipa, _ma.size >> 20);
-       //         kvm_vm_arm_rme_init_ipa_range(vm_fd, _ma.base_guest, _ma.size)
-       //             .expect("VM: Failed to init IPA for region:{_mt.to_string():?}");
-       //     }
-       // }
         Ok(())
     }
 
-    fn vm_vcpu_initialize(
-        &self,
-        kvm: &kvm_ioctls::Kvm,
-        vm_fd: &kvm_ioctls::VmFd,
-        total_vcpus: usize,
-        entry_addr: u64,
-        auto_start: bool,
-        page_allocator_addr: Option<u64>,
-        share_space_addr: Option<u64>,
-    ) -> Result<Vec<std::sync::Arc<crate::arch::vm::vcpu::ArchVirtCpu>>, crate::qlib::common::Error>
-    {
+    fn vm_vcpu_initialize(&self, kvm: &kvm_ioctls::Kvm, vm_fd: &kvm_ioctls::VmFd,
+        total_vcpus: usize, entry_addr: u64, auto_start: bool, page_allocator_addr: Option<u64>,
+        share_space_addr: Option<u64>) -> Result<Vec<Arc<ArchVirtCpu>>, Error> {
         let mut vcpus: Vec<Arc<ArchVirtCpu>> = Vec::with_capacity(total_vcpus);
 
         for vcpu_id in 0..total_vcpus {
-            let vcpu = Arc::new(ArchVirtCpu::new_vcpu(
-                vcpu_id as usize,
-                total_vcpus,
-                &vm_fd,
-                entry_addr,
-                page_allocator_addr,
-                share_space_addr,
-                auto_start,
-                self.vm_resources.mem_layout.kernel_stack_size,
-                Some(&kvm),
-                self.cc_mode,
-            )?);
-
+            debug!("VMM - Initilize vCPU-{}", vcpu_id);
+            let vcpu = Arc::new(ArchVirtCpu::new_vcpu(vcpu_id as usize, total_vcpus,
+                &vm_fd, entry_addr, page_allocator_addr, share_space_addr, auto_start,
+                self.vm_resources.mem_layout.kernel_stack_size, Some(&kvm), self.cc_mode)?);
             vcpus.push(vcpu);
         }
-
-        for mut vcpu in &mut vcpus {
+        let slice_size = total_vcpus * std::mem::size_of::<RealmVcpuXBootHelpData>();
+        let boot_help_data_base: u64 =
+            AlignedAllocate(slice_size, MemoryDef::PAGE_SIZE as usize, false)
+                .expect("Failed to reserve buffer for boot aid information.");
+        let data_slice = unsafe {
+            std::slice::from_raw_parts_mut(
+                adjust_addr_to_host(boot_help_data_base, self.cc_mode)
+                    as *mut RealmVcpuXBootHelpData, total_vcpus)
+        };
+        debug!("VMM: Reserved addr:{:#0x} - size:{} Bytes, for boot aid information.",
+            boot_help_data_base, slice_size);
+        let (_, gh_base, _) = self.vm_resources
+            .mem_area_info(MemAreaType::PrivateHeapArea).unwrap();
+        let mut i = 0;
+        for vcpu in &mut vcpus {
             vcpu.vcpu_init().expect("VM: Failed to initialize vCPU");
-            let mpidr = vcpu.vcpu_base.vcpu_fd.get_one_reg(0x603000000013C005)
-                .expect("vCPU: Failed to read MPIDR");
-            println!("MPIDR - {:#x}",mpidr);
-            vcpu.initialize_sys_registers().expect("VM: Failed to initialize systetem registers");
-            vcpu.initialize_cpu_registers().expect("VM: Failed to initialize GPR-registers");
+            let mpidr = vcpu.vcpu_base.vcpu_fd.get_one_reg(KvmAarch64Reg::Mpidr as u64)
+                .expect("Failed to get MPIDR");
+            let _stack_base_offset = vcpu.vcpu_base.topStackAddr - gh_base;
+            if _stack_base_offset >= 4 * MemoryDef::ONE_GB {
+                panic!("VMM: Failed to prepare vCPU - stack offset is bigger than 4GB.");
+            }
+            data_slice[i] = RealmVcpuXBootHelpData::new(mpidr, _stack_base_offset as u32);
+            debug!("VMM: Boot help data: {} - MPIDR:{:#0x} - SP_EL1:{:#0x} - SP_offset:{:#0x}.",
+                i, mpidr, vcpu.vcpu_base.topStackAddr, _stack_base_offset);
+            vcpu.initialize_sys_registers()
+                .expect("VM: Failed to initialize systetem registers");
+            vcpu.initialize_cpu_registers()
+                .expect("VM: Failed to initialize GPR-registers");
+            i += 1;
         }
-
+        vcpus[0].vcpu_base.vcpu_fd.set_one_reg(KvmAarch64Reg::X7 as u64, boot_help_data_base)
+            .expect("VMM: vCPU failed to set X7:BootHelpData-base");
         VMS.lock().vcpus = vcpus.clone();
-
         Ok(vcpus)
     }
 
-    fn post_vm_initialize(&mut self, vm_fd: &mut VmFd) -> Result<(), crate::qlib::common::Error> {
+    fn post_vm_initialize(&mut self, vm_fd: &mut VmFd) -> Result<(), Error> {
         self.realm.vgic_init_finalize()
             .expect("VM: Failed to finalize vGIC initialization.");
         let vms = VMS.lock();
         for vcpu in &vms.vcpus {
             let _ = vcpu.vcpu_init_finalize();
         }
-        self.realm
-            .activate_realm(vm_fd)
+        self.realm.activate_realm(vm_fd)
             .expect("VM: Failed to activate realm");
-
         Ok(())
     }
 
-    fn post_init_upadate(&mut self) -> Result<(), crate::qlib::common::Error> {
-        todo!()
+    fn get_type(&self) -> CCMode {
+        CCMode::Cca
     }
 }
 
@@ -702,17 +634,20 @@ impl VmCcRealm {
         let mut rme_cap_config: kvm_enable_cap = Default::default();
         rme_cap_config.cap = KvmCapArmRmeVm::CapRme as u32;
         rme_cap_config.args[0] = KvmCapArmRmeVm::CreateRd as u64;
-
         kvm_vm_arm_rme_enable_cap(&vm_fd, &mut rme_cap_config)
     }
 
-    fn create_realm_dependency_devices(&self, vm_fd: &VmFd) -> Result<(DeviceFd, DeviceFd), Error> {
-        let vgic_fd = kvm_vm_arm_create_irq_chip(&self.realm, &vm_fd);
-        let vgic_its_fd = kvm_vm_arm_create_its_device(&self.realm, &vm_fd);
+    fn create_realm_dependency_devices(&mut self, vm_fd: &VmFd) -> Result<(DeviceFd, DeviceFd), Error> {
+        self.realm.vgic3.adjuct_redist_base(self.vm_resources.min_vcpu_amount);
+        let vgic_fd = kvm_vm_arm_create_irq_chip(vm_fd, &self.realm.vgic3);
+        let vgic_its_fd = kvm_vm_arm_create_its_device(vm_fd, &self.realm.vgic3);
         if vgic_fd.is_err() || vgic_its_fd.is_err() {
             error!("VM: Failed to create required devices for realm.");
             return Err(vgic_fd.unwrap_err());
         };
+        let _ = kvm_arm_vm_smccc_filter(&vm_fd, SMC_RSI_HOST_CALL, 1u32,
+            KVM_SMCCC_FILTER_ACTION::FwdToUser as u8)
+            .expect("VMM: KVM failed to set smccc filter for RSI_HOST_CALL");
 
         Ok((vgic_fd.unwrap(), vgic_its_fd.unwrap()))
     }

@@ -1071,13 +1071,29 @@ impl MemoryManager {
             Some(iops) => {
                 let vmaOffset = pageAddr - range.Start();
                 let fileOffset = vmaOffset + vma.offset; // offset in the file
+                debug!("VM: Install Page - HostIO - vma-offset:{:#0x} - file-offset:{:#0x}", vmaOffset, fileOffset);
+                unsafe {
+                    let fmap_ptr = 0x4060200000 as *const u8;
+                    let buf = core::slice::from_raw_parts(fmap_ptr, 4096);
+                    debug!("VM: Debug01- FMAP- read byte:{:#0x}, {:#0x}, {:#0x}",
+                        buf[0], buf[10], buf[100]);
+                }
                 let phyAddr = iops.MapFilePage(task, fileOffset)?;
                 #[cfg(feature = "cc")]
                 if is_cc_enabled() {
                     let writeable = vma.effectivePerms.Write();
+                    unsafe {
+                        let fmap_ptr = phyAddr as *const u8;
+                        let buf = core::slice::from_raw_parts(fmap_ptr, 4096);
+                        debug!("VM: Debug02- FMAP- read byte:{:#0x}, {:#0x}, {:#0x}",
+                            buf[0], buf[10], buf[100]);
+                    }
 
+                    debug!("VM: Install Page - copy pha:{:#0x}", phyAddr);
                     let page = { super::super::PAGE_MGR.AllocPage(true).unwrap() };
+                    debug!("VM: Install Page - copy pha:{:#0x} to page:{:#0x}", phyAddr, page);
                     CopyPage(page, phyAddr);
+                    debug!("VM: Install Page - copy done.");
 
                     let ret;
                     if writeable {

@@ -162,6 +162,8 @@ bitflags! {
         // Occupied bits, dedicated for SW usage.
         const SWAPPED_OUT     = 1 << 56;
         const TAKEN           = 1 << 57; //Another thread is using the PTE.
+        // Test Flags
+        const CCAKERNELPAGE =  1 | (1 << 1) | (0 << 2) | (0 << 6) | (0 << 7) | (3 << 8) | (1 << 10);
     }
 }
 
