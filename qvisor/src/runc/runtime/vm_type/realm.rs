@@ -247,9 +247,9 @@ impl VmType for VmCcRealm {
         _mem_map.insert(
             MemAreaType::FileMapArea,
             MemArea {
-                base_host: MemoryDef::FILE_MAP_OFFSET,
-                base_guest: MemoryDef::FILE_MAP_OFFSET,
-                size: MemoryDef::FILE_MAP_SIZE,
+                base_host: MemoryDef::HOST_FILE_MAP_ADDRESS,
+                base_guest: MemoryDef::HOST_FILE_MAP_ADDRESS,
+                size: MemoryDef::HOST_FILE_MAP_SIZE,
                 guest_private: false,
                 host_backedup: true,
             },
