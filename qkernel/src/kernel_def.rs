@@ -20,6 +20,8 @@ use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
 
 use crate::qlib::fileinfo::*;
+#[cfg(target_arch = "aarch64")]
+use crate::qlib::kernel::arch::tee::is_hw_tee;
 
 use self::kernel::socket::hostinet::tsot_mgr::TsotSocketMgr;
 use self::tsot_msg::TsotMessage;
@@ -51,21 +53,20 @@ use super::qlib::*;
 use super::syscalls::sys_file::*;
 use super::Kernel::HostSpace;
 
-
 use crate::GLOBAL_ALLOCATOR;
 
 #[cfg(feature = "cc")]
-use crate::PRIVATE_VCPU_ALLOCATOR;
-#[cfg (feature = "cc")]
 use super::qlib::qmsg::sharepara::*;
-#[cfg (feature = "cc")]
-use Kernel::is_cc_enabled;
-#[cfg (feature = "cc")]
-use crate::GUEST_HOST_SHARED_ALLOCATOR;
-#[cfg (feature = "cc")]
-use alloc::boxed::Box;
-#[cfg (feature = "cc")]
+#[cfg(feature = "cc")]
 use crate::qlib::config::CCMode;
+#[cfg(feature = "cc")]
+use crate::GUEST_HOST_SHARED_ALLOCATOR;
+#[cfg(feature = "cc")]
+use crate::PRIVATE_VCPU_ALLOCATOR;
+#[cfg(feature = "cc")]
+use alloc::boxed::Box;
+#[cfg(feature = "cc")]
+use Kernel::is_cc_enabled;
 
 impl OOMHandler for ListAllocator {
     fn handleError(&self, size: u64, alignment: u64) {
@@ -328,16 +329,25 @@ pub fn HyperCall64(type_: u16, para1: u64, para2: u64, para3: u64, para4: u64) {
         let vcpu_id = if type_ != crate::qlib::HYPERCALL_SHARESPACE_INIT {
             GetVcpuId()
         } else {
-             0
+            0
         };
         _hcall_prepare_shared_buff(vcpu_id, para1, para2, para3, para4);
-        let dummy_data: u8 = 0;
-        let hcall_id = MemoryDef::HYPERCALL_MMIO_BASE + type_ as u64;
-        unsafe {
-            asm!("str w1, [x0]",
-                 in("x0") hcall_id,
-                 in("w1") dummy_data,
-            )
+
+        let hcall_id = MemoryDef::HYPERCALL_MMIO_BASE as u64 + type_ as u64;
+        //
+        //TODO: We can remove the call_host when MMIO is tested to work
+        //
+        if is_hw_tee() == false {
+            let dummy_data: u8 = 0;
+            unsafe {
+                asm!("str w1, [x0]",
+                    in("x0") hcall_id,
+                    in("w1") dummy_data,
+                )
+            }
+        } else {
+            use crate::qlib::kernel::arch::tee::call_host;
+            call_host(hcall_id, para1, para2, para3, para4);
         }
     }
 }
@@ -555,7 +565,7 @@ impl HostAllocator {
     #[cfg(feature = "cc")]
     pub fn InitPrivateAllocator(&self, mode: CCMode) {
         match mode {
-            CCMode::NormalEmu => {
+            CCMode::NormalEmu | CCMode::Cca => {
                 crate::qlib::kernel::Kernel::IDENTICAL_MAPPING.store(false, Ordering::SeqCst);
                 self.guestPrivHeapAddr.store(
                     MemoryDef::GUEST_PRIVATE_RUNNING_HEAP_OFFSET,
@@ -579,7 +589,6 @@ impl HostAllocator {
         }
     }
 
-
     #[cfg(feature = "cc")]
     pub fn InitSharedAllocator(&self) {
         self.sharedHeapAddr.store(MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET, Ordering::SeqCst);
@@ -590,8 +599,6 @@ impl HostAllocator {
         let sharedHeapStart = self.sharedHeapAddr.load(Ordering::Relaxed);
         let shaedHeapEnd = sharedHeapStart + MemoryDef::GUEST_HOST_SHARED_HEAP_SIZE as u64;
         *self.GuestHostSharedAllocator() = ListAllocator::New(sharedHeapStart as _, shaedHeapEnd);
-
-
         // reserve 4 pages for the listAllocator and share para page
         let size = 4 * MemoryDef::PAGE_SIZE as usize;
         self.GuestHostSharedAllocator().Add(MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET as usize + size,
@@ -612,7 +619,6 @@ unsafe impl GlobalAlloc for HostAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        
         let addr = ptr as u64;
         if !Self::IsIOBuf(addr) {
             self.Allocator().dealloc(ptr, layout);
@@ -702,7 +708,6 @@ unsafe impl GlobalAlloc for GlobalVcpuAllocator {
         return PRIVATE_VCPU_ALLOCATOR.AllocatorMut().dealloc(ptr, layout);
     }
 }
-
 
 impl UringAsyncMgr {
     pub fn FreeSlot(&self, id: usize) {
