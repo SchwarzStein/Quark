@@ -64,6 +64,7 @@ vmm-sys-util = {version = "0.12.1", optional = false }
 default = ["cc"]
 cuda = ["cuda-driver-sys", "cuda-runtime-sys", "libelf", "rcublas-sys", "cuda11-cublasLt-sys"]
 cc = []
+snp = ["cc"]
 
 [dependencies.lazy_static]
 version = "1.4"
