@@ -22,7 +22,7 @@ enum_dispatch = { git = "https://github.com/QuarkContainer/enum_dispatch_clone.g
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_trace"] }
 
 [features]
-snp = []
+snp = ["yaxpeax-x86", "yaxpeax-arch"]
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 x86_64 = "0.14.7"
@@ -38,6 +38,16 @@ features = ["spin_no_std"]
 version = "0.3.8"
 default-features = false
 features = ["alloc"]
+
+[dependencies.yaxpeax-x86]
+version = "1.2.2"
+default-features = false
+optional = true
+
+[dependencies.yaxpeax-arch]
+version = "0.2.7"
+default-features = false
+optional = true
 
 [profile.dev]
 panic = "abort"
