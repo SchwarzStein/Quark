@@ -17,6 +17,10 @@ use alloc::vec::Vec;
 use core::ptr;
 use core::sync::atomic;
 
+#[cfg(feature = "snp")]
+use crate::qlib::kernel::arch::tee::sev_snp::amd_snp_driver::{UserMemScope, SEV_SNP_DRIVER};
+#[cfg(feature = "snp")]
+use alloc::string::ToString;
 use crate::qlib::kernel::kernel::kernel::GetKernel;
 #[cfg(feature = "cc")]
 use crate::qlib::kernel::Kernel::is_cc_enabled;
@@ -46,6 +50,25 @@ pub fn ControllerProcessHandler() -> Result<()> {
         let fd = IOURING.SyncAccept(task, SHARESPACE.controlSock);
         taskMgr::CreateTask(ControlMsgHandler as u64, fd as *const u8, false);
     }
+}
+
+#[cfg(feature = "snp")]
+// Returns a base64 of the sha512 of all chunks.
+pub fn hash_chunks(chunks: Vec<Vec<u8>>) -> String {
+    use base64ct::{Base64, Encoding};
+    use sha2::{Digest, Sha512};
+
+    let mut hasher = Sha512::new();
+
+    for chunk in chunks.iter() {
+        hasher.update(chunk);
+    }
+
+    let res = hasher.finalize();
+
+    let base64 = Base64::encode_string(&res);
+
+    base64
 }
 
 pub fn HandleSignal(signalArgs: &SignalArgs) {
@@ -206,6 +229,8 @@ pub fn SignalHandler(_: *const u8) {
 }
 
 pub fn ControlMsgHandler(fd: *const u8) {
+    #[cfg(feature = "snp")]
+    use base64ct::Encoding;
     let fd = fd as i32;
 
     let task = Task::Current();
@@ -214,6 +239,34 @@ pub fn ControlMsgHandler(fd: *const u8) {
 
     //info!("payload: {:?}", &msg.payload);
     //defer!(error!("payload handling ends"));
+    #[cfg(feature = "snp")]
+    {
+        if crate::qlib::kernel::arch::tee::get_tee_type() == crate::CCMode::SevSnp {
+            let usermemscope = UserMemScope;
+            let report_buf = [0u8; 4096];
+
+            let ehd_chunks = vec!["asdnajsndjksand".to_string().into_bytes()];
+            let nonce = hash_chunks(ehd_chunks);
+
+            let report_data_bin = base64ct::Base64::decode_vec(&nonce)
+                .map_err(|e| {
+                    Error::Common(format!("get_report, Base64::decode_vec failed: {:?}", e))
+                })
+                .unwrap();
+            let a = SEV_SNP_DRIVER
+                .lock()
+                .get_attestation(
+                    usermemscope,
+                    report_data_bin.as_ptr().addr(),
+                    report_data_bin.len(),
+                    &report_buf as *const [u8] as *const u8 as usize,
+                    report_buf.len(),
+                )
+                .unwrap();
+            info!("attestation finished {:?}", a);
+        }
+    }
+
     match msg.payload {
         Payload::Pause => {
             let kernel = LOADER.Lock(task).unwrap().kernel.clone();

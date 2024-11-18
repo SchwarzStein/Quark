@@ -30,6 +30,7 @@
 #![recursion_limit = "256"]
 #![allow(invalid_reference_casting)]
 #![feature(btreemap_alloc)]
+#![feature(strict_provenance)]
 
 #[macro_use]
 extern crate alloc;
@@ -55,6 +56,12 @@ extern crate xmas_elf;
 extern crate yaxpeax_arch;
 #[cfg(feature = "snp")]
 extern crate yaxpeax_x86;
+#[cfg(feature = "snp")]
+extern crate aes_gcm;
+#[cfg(feature = "snp")]
+extern crate sha2;
+#[cfg(feature = "snp")]
+extern crate base64ct;
 
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
