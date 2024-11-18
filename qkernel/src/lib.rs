@@ -139,6 +139,9 @@ pub mod kernel_def;
 pub mod rdma_def;
 mod syscalls;
 
+#[cfg(feature = "snp")]
+use crate::qlib::kernel::arch::tee::sev_snp::ghcb::*;
+
 #[global_allocator]
 pub static VCPU_ALLOCATOR: GlobalVcpuAllocator = GlobalVcpuAllocator::New();
 
