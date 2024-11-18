@@ -246,10 +246,10 @@ impl HostAllocator {
                     panic!("VM: Failed to lock heap memory - error:{:?}", std::io::Error::last_os_error());
                 }
         }
-        let heap_size = if identical {
-            MemoryDef::GUEST_PRIVATE_HEAP_SIZE
-        } else {
-            MemoryDef::GUEST_PRIVATE_INIT_HEAP_SIZE
+        use crate::CCMode;
+        let heap_size = match crate::qlib::kernel::arch::tee::get_tee_type() {
+            CCMode::NormalEmu | CCMode::SevSnp => MemoryDef::GUEST_PRIVATE_INIT_HEAP_SIZE,
+            _ => MemoryDef::GUEST_PRIVATE_HEAP_SIZE,
         };
         let guestPrivHeapEnd = guestPrivHeapStart + heap_size;
         *self.GuestPrivateAllocator() = ListAllocator::New(guestPrivHeapStart, guestPrivHeapEnd);
