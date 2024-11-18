@@ -270,6 +270,36 @@ impl HostAllocator {
             MemoryDef::GHCB_OFFSET,
             host_init_ghcb_addr
         );
+        
+        let attestation_req_addr = unsafe {
+            let flags = libc::MAP_SHARED | libc::MAP_ANON | libc::MAP_FIXED;
+            libc::mmap(
+                MemoryDef::ATTESTATION_REQ_REQ as _,
+                MemoryDef::PAGE_SIZE as usize,
+                libc::PROT_READ | libc::PROT_WRITE,
+                flags,
+                -1,
+                0,
+            ) as u64
+        };
+        if attestation_req_addr == libc::MAP_FAILED as u64 {
+            panic!("mmap: failed to get mapped memory area for cpuid page");
+        }
+
+        let attestation_rsp_addr = unsafe {
+            let flags = libc::MAP_SHARED | libc::MAP_ANON | libc::MAP_FIXED;
+            libc::mmap(
+                MemoryDef::ATTESTATION_REQ_RSP as _,
+                MemoryDef::PAGE_SIZE as usize,
+                libc::PROT_READ | libc::PROT_WRITE,
+                flags,
+                -1,
+                0,
+            ) as u64
+        };
+        if attestation_rsp_addr == libc::MAP_FAILED as u64 {
+            panic!("mmap: failed to get mapped memory area for cpuid page");
+        }
     }
 }
 

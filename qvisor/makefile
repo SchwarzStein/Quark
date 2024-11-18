@@ -13,7 +13,7 @@ cuda_release:
 	CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --release --features cuda
 
 snp_debug:
-	CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --features snp
+	RUSTFLAGS="--cfg aes_force_soft --cfg polyval_force_soft" CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --features snp
 
 snp_release:
-	CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --release --features snp
+	RUSTFLAGS="--cfg aes_force_soft --cfg polyval_force_soft" CARGO_TARGET_DIR=../target cargo +$(TOOLCHAIN) build --release --features snp
