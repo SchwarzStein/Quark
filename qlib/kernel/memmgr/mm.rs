@@ -54,7 +54,7 @@ use crate::qlib::kernel::{SHARESPACE, asm::*};
 use crate::qlib::vcpu_mgr::VcpuMode;
 
 #[cfg(feature = "cc")]
-use crate::qlib::kernel::Kernel::is_cc_enabled;
+use crate::qlib::kernel::arch::tee::is_cc_active;
 
 pub struct MMMapping {
     pub vmas: AreaSet<VMA>,
@@ -1074,7 +1074,7 @@ impl MemoryManager {
                 debug!("VM: Install Page - HostIO - vma-offset:{:#0x} - file-offset:{:#0x}", vmaOffset, fileOffset);
                 let phyAddr = iops.MapFilePage(task, fileOffset)?;
                 #[cfg(feature = "cc")]
-                if is_cc_enabled() {
+                if is_cc_active() {
                     let writeable = vma.effectivePerms.Write();
                     let page = { super::super::PAGE_MGR.AllocPage(true).unwrap() };
                     debug!("VM: Install Page - copy pha:{:#0x} to page:{:#0x}", phyAddr, page);
