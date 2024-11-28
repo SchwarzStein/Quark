@@ -83,7 +83,7 @@ const _SCTLR_C: u64 = 1 << 2;
 const _SCTLR_I: u64 = 1 << 12;
 const _SCTLR_DZE: u64 = 1 << 14;
 const _SCTLR_UCT: u64 = 1 << 15;
-const _SCTLR_SPAN: u64 = 1 << 23;
+const _SCTLR_SPAN: u64 = 0 << 23;
 const _SCTLR_UCI: u64 = 1 << 26;
 // NOTE: before PAN is fully supported, we disable this feature by setting SCTLR_EL1.SPAN
 // to 1, preventing PSTATE.PAN from being set to 1 upon exception to EL1
