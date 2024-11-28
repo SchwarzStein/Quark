@@ -38,6 +38,8 @@ pub fn Read(task: &Task, fd: i32, addr: u64, size: i64) -> Result<i64> {
     //task.PerfGoto(PerfType::Read);
     // defer!(task.PerfGofrom(PerfType::Read));
 
+    debug!("VM: SysRead - fd:{}, addr:{:#0x}, size:{:#0x}",
+    fd, addr, size);
     let file = task.GetFile(fd)?;
 
     if !file.Flags().Read || file.Flags().Path {
@@ -321,6 +323,7 @@ fn RepReadv(task: &Task, f: &File, dsts: &mut [IoVec]) -> Result<i64> {
 fn readv(task: &Task, f: &File, dsts: &mut [IoVec]) -> Result<i64> {
     let mut iovs = task.AdjustIOVecPermission(dsts, true, true)?;
     let dsts = &mut iovs;
+    debug!("VM: read destination:{:#0x}", dsts as *const _ as u64);
 
     let wouldBlock = f.WouldBlock();
     if !wouldBlock {

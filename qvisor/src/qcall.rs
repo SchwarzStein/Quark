@@ -56,6 +56,7 @@ impl KVMVcpu {
     //return : true(push the result back), false(block wait)
     pub fn qCall(msg: &'static Msg) -> u64 {
         let mut ret = 0;
+        debug!("VMM: msg:{:?}", msg);
 
         match msg {
             Msg::LoadProcessKernel(msg) => {

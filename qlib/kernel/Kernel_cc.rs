@@ -2811,6 +2811,8 @@ impl HostSpace {
 
     pub fn MMapFile(len: u64, fd: i32, offset: u64, prot: i32) -> i64 {
         if is_cc_enabled() {
+            debug!("VM: Map File: fd:{:?}, len:{:#0x}, offset:{:#0x}",
+                fd, len, offset);
             let mut msg = Box::new_in(
                 Msg::MMapFile(MMapFile {
                     len,

@@ -66,7 +66,6 @@ use super::qlib::addr::Addr;
 use super::qlib::common::{Error, Result};
 use super::qlib::control_msg::*;
 use super::qlib::kernel::SignalProcess;
-use super::qlib::linux::membarrier::*;
 use super::qlib::linux_def::*;
 use super::qlib::pagetable::PageTables;
 use super::qlib::pagetable::PageTableFlags;
@@ -516,7 +515,7 @@ impl VMSpace {
     }
 
     pub fn TryOpenAt(dirfd: i32, name: u64, addr: u64, skiprw: bool) -> i64 {
-        //info!("TryOpenAt1: the filename is {}", Self::GetStr(name));
+        debug!("TryOpenAt: the filename is {}", Self::GetStr(name));
         let dirfd = if dirfd < 0 {
             dirfd
         } else {
@@ -550,7 +549,8 @@ impl VMSpace {
             )
         };
 
-        //error!("TryOpenAt dirfd {}, name {} ret {}", dirfd, Self::GetStr(name), fd);
+        debug!("VMM: TryOpenAt - dirfd:{}, fd:{}, name:{}, fstat-ret:{}",
+            dirfd, fd, Self::GetStr(name), ret);
 
         if fd < 0 {
             return fd as i64;
