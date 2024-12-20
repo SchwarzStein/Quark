@@ -1,0 +1,79 @@
+// Copyright (c) 2021 Quark Container Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//#[cfg(target_arch = "aarch64")]
+#[path = "./arm-cca/attestation.rs"]
+pub mod hw_attestation;
+
+use crate::qlib::mem::cc_allocator::GuestHostSharedAllocator;
+use alloc::vec::Vec;
+use lazy_static::lazy_static;
+use core::cell::SyncUnsafeCell;
+use spin::{Mutex, lazy::Lazy};
+
+use self::hw_attestation::TeeAttester;
+use crate::qlib::{common::{Result, Error},
+    linux_def::SysErr};
+
+pub type Challenge = Vec<u8>;
+pub type Responce = Vec<u8, GuestHostSharedAllocator>;
+
+lazy_static! {
+    pub static ref ATTESTATION_DRIVER: Mutex::<&'static mut AttestationDriver> = {
+        static DRIVER: Lazy<SyncUnsafeCell<AttestationDriver>> =
+            Lazy::new(lazy_cell_new);
+        let _d = unsafe {
+            &mut (*DRIVER.get())
+        };
+
+        _d.init();
+
+        Mutex::<&mut AttestationDriver>::new(_d)
+    };
+}
+
+fn lazy_cell_new() -> SyncUnsafeCell<AttestationDriver> {
+    SyncUnsafeCell::new(AttestationDriver::default())
+}
+
+pub trait AttestationDriverT {
+    fn get_report(&self, challenge: &Challenge) -> Result<Responce>;
+    fn valid_challenge(challenge: &mut Challenge) -> bool;
+    //TODO: Other methods
+    //  ...
+}
+
+//
+// Frontend for requests
+//
+#[derive(Default)]
+pub struct AttestationDriver {
+    tee_attester: TeeAttester,
+}
+
+impl AttestationDriver {
+    fn init(&mut self) {
+        #[cfg(not(target_arch = "aarch64"))]
+        self.tee_attester.init();
+    }
+
+    pub fn get_report(&self, challenge: &mut Challenge) -> Result<Responce> {
+        if TeeAttester::valid_challenge(challenge) {
+            debug!("VM: Challege is valid - request report.");
+            return self.tee_attester.get_report(&challenge);
+        }
+        error!("VM: challenge was not in valid format.");
+        Err(Error::SystemErr(SysErr::EINVAL))
+    }
+}
