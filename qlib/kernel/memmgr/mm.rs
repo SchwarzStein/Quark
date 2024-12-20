@@ -1472,7 +1472,7 @@ impl MemoryManager {
                     };
 
                     (
-                        entry.addr().as_u64(),
+                        crate::qlib::kernel::arch::tee::guest_physical_address(entry.addr().as_u64()),
                         AccessType::NewFromPageFlags(entry.flags()),
                     )
                 }
