@@ -16,6 +16,7 @@
 #![feature(proc_macro_hygiene)]
 #![feature(alloc_error_handler)]
 #![feature(abi_x86_interrupt)]
+#![feature(sync_unsafe_cell)]
 #![allow(dead_code)]
 #![allow(deref_nullptr)]
 #![allow(non_snake_case)]
@@ -60,6 +61,7 @@ use qlib::mutex::*;
 use taskMgr::{CreateTask, IOWait, WaitFn};
 use vcpu::CPU_LOCAL;
 
+use crate::drivers::attestation::{Challenge, ATTESTATION_DRIVER};
 use crate::qlib::kernel::GlobalIOMgr;
 #[cfg(feature = "cc")]
 use crate::qlib::ShareSpace;
@@ -132,6 +134,7 @@ mod interrupt;
 pub mod kernel_def;
 pub mod rdma_def;
 mod syscalls;
+pub mod drivers;
 
 #[global_allocator]
 pub static VCPU_ALLOCATOR: GlobalVcpuAllocator = GlobalVcpuAllocator::New();
@@ -713,6 +716,16 @@ pub extern "C" fn rust_main(
     if id == 1 {
         debug!("VM: vCPU-1: heap start is {:x}", heapStart);
         self::Init();
+        let mut challenge: Challenge = [0xa, 0xb, 0xc, 0x1, 0x1, 0x1, 0x2, 0x2,
+                                        0xa, 0xb, 0xc, 0x1, 0x1, 0x1, 0x2, 0x2,
+                                        0xa, 0xb, 0xc, 0x1, 0x1, 0x1, 0x2, 0x2,
+                                        0xa, 0xb, 0xc, 0x1, 0x1, 0x1, 0x2, 0x2,
+                                        0xa, 0xb, 0xc, 0x1, 0x1, 0x1, 0x2, 0x2,
+                                        0xa, 0xb, 0xc, 0x1, 0x1, 0x1, 0x2, 0x2,
+                                        0xa, 0xb, 0xc, 0x1, 0x1, 0x1, 0x2, 0x2,
+                                        0xa, 0xb, 0xc, 0x1, 0x1, 0x1, 0x2, 0x2].to_vec();
+        let token = ATTESTATION_DRIVER.lock().get_report(&mut challenge);
+        debug!("VM: got attestation token: {:?}", token);
         if autoStart {
             CreateTask(StartRootContainer as u64, ptr::null(), false);
         }
