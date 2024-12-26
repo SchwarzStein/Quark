@@ -123,7 +123,8 @@ pub fn boot_others(_boot_help_data: u64, _vcpu_count: u64, _pc: u64) {
 }
 
 pub fn get_attestation(_challenge: &Vec<u8>) -> Result<usize> {
-    todo!("Impliment get attestation")
+    #[cfg(target_arch = "aarch64")]
+    _tee::attestation::init_attestation(_challenge)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -131,5 +132,5 @@ use crate::qlib::mem::cc_allocator::GuestHostSharedAllocator;
 #[cfg(target_arch = "aarch64")]
 pub fn get_attestation_continue(_token: &mut Vec<u8, GuestHostSharedAllocator>, _buff_addr: u64)
     -> Result<bool> {
-    todo!("Impliment continue get attestation");
+    _tee::attestation::attestation_cont(_token, _buff_addr)
 }
