@@ -13,7 +13,3 @@
 // limitations under the License.
 
 pub mod attestation;
-#[cfg(all(target_arch = "x86_64", feature = "tdx"))]
-pub mod tdx;
-#[cfg(target_arch = "aarch64")]
-pub mod cca;

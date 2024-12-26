@@ -33,6 +33,7 @@ use crate::qlib::common::{Result, Error};
 use crate::qlib::SysErr;
 use crate::qlib::QRwLock;
 use crate::qlib::range::Range;
+use alloc::vec::Vec;
 
 lazy_static! {
     //TODO: It should be only set once
@@ -388,4 +389,19 @@ pub fn set_gpa_status(addr: u64, as_host_shared: bool) -> Result<bool> {
     error!("VM: Addr:{:#0x} is not in the convertable mem-areas.", addr);
 
     return Err(Error::SysError(SysErr::EINVAL));
+}
+
+pub fn get_attestation(_challenge: &Vec<u8>) -> Result<usize> {
+    #[cfg(target_arch = "aarch64")] {
+        return _tee::attestation::init_attestation(_challenge);
+    }
+    #[cfg(not(target_arch = "aarch64"))] {
+        todo!();
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+pub fn get_attestation_continue(_token: &mut Vec<u8>, _buff_addr: u64)
+    -> Result<bool> {
+    _tee::attestation::attestation_cont(_token, _buff_addr)
 }
