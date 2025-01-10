@@ -73,6 +73,7 @@ use crate::qlib::kernel::fs::tty::master::MasterInodeOperations;
 use crate::qlib::kernel::fs::tty::slave::SlaveInodeOperations;
 use crate::qlib::kernel::kernel::pipe::node::PipeIops;
 use crate::qlib::kernel::socket::unix::unix::UnixSocketInodeOps;
+use crate::qlib::kernel::fs::sys::tsm::TsmIops;
 
 pub fn ContextCanAccessFile(task: &Task, inode: &Inode, reqPerms: &PermMask) -> Result<bool> {
     let creds = task.creds.clone();
@@ -148,6 +149,7 @@ pub enum IopsType {
     SymlinkNode,
     SimpleFileInode,
     ProxyDevice,
+    TsmIops,
 }
 
 #[enum_dispatch]
@@ -181,6 +183,7 @@ pub enum Iops {
     SlaveInodeOperations(SlaveInodeOperations),
     PipeIops(PipeIops),
     UnixSocketInodeOps(UnixSocketInodeOps),
+    TsmInodeOps(TsmIops),
 }
 
 impl Iops {
@@ -264,6 +267,13 @@ impl Iops {
     pub fn PipeIops(&self) -> Option<PipeIops> {
         match self {
             Self::PipeIops(inner) => Some(inner.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn TsmInodeOps(&self) -> Option<TsmIops> {
+        match self {
+            Self::TsmInodeOps(inner) => Some(inner.clone()),
             _ => None,
         }
     }

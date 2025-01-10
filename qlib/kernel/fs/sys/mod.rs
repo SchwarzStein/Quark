@@ -15,6 +15,7 @@
 pub mod devices;
 pub mod fs;
 pub mod sys;
+pub mod tsm;
 
 use crate::qlib::mutex::*;
 use alloc::sync::Arc;
