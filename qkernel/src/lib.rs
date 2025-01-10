@@ -55,6 +55,7 @@ use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use core::{mem, ptr};
 
+use qlib::kernel::arch::tee::{is_hw_tee, register_att_driver};
 use spin::mutex::Mutex;
 
 use qlib::mutex::*;
@@ -243,6 +244,11 @@ pub fn Init() {
     self::fs::Init();
     self::socket::Init();
     print::init().unwrap();
+    let res = register_att_driver()
+        .expect("VM: TEE failed to register attestation driver.");
+    if res {
+        info!("VM: TEE - Attestation driver functionlity is exposed as file operations.");
+    }
 }
 
 #[no_mangle]
