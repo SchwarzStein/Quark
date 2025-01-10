@@ -15,6 +15,7 @@
 #[cfg(target_arch = "aarch64")]
 #[path = "./aarch64/tee/realm.rs"]
 pub mod realm;
+pub mod atd;
 
 //NOTE: When x86 comes with its own implementation, we will
 //      remove the arch-guards inside the functions.
@@ -133,4 +134,12 @@ use crate::qlib::mem::cc_allocator::GuestHostSharedAllocator;
 pub fn get_attestation_continue(_token: &mut Vec<u8, GuestHostSharedAllocator>, _buff_addr: u64)
     -> Result<bool> {
     _tee::attestation::attestation_cont(_token, _buff_addr)
+}
+
+pub fn register_att_driver() -> Result<bool> {
+    if is_hw_tee() == false {
+        return Ok(false);
+    } else {
+       return atd::expose_att_driver_func_as_file();
+    }
 }
