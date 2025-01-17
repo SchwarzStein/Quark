@@ -50,11 +50,26 @@ extern crate spin;
 #[cfg(target_arch = "x86_64")]
 extern crate x86_64;
 extern crate xmas_elf;
+//
+// Conf-Comp deps. - AttAg.
+//
+extern crate rsa;
+extern crate aes_gcm;
+extern crate embedded_tls;
+extern crate embedded_io;
+extern crate httparse;
+extern crate base64;
+extern crate sha2;
+extern crate zeroize;
+extern crate serde;
+extern crate base64ct;
+extern crate getrandom;
 
+use alloc::vec::Vec;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use core::{mem, ptr};
-
+use getrandom::register_custom_getrandom;
 use spin::mutex::Mutex;
 
 use qlib::mutex::*;
@@ -135,6 +150,7 @@ pub mod kernel_def;
 pub mod rdma_def;
 mod syscalls;
 pub mod drivers;
+pub mod attestation_agent;
 
 #[global_allocator]
 pub static VCPU_ALLOCATOR: GlobalVcpuAllocator = GlobalVcpuAllocator::New();
@@ -237,6 +253,54 @@ extern "C" {
 #[cfg(target_arch = "aarch64")]
 extern "C" {
     pub fn vector_table();
+}
+
+register_custom_getrandom!(aarch64_getrandom);
+
+//NOTE: This will get fixed on refactoring
+pub fn aarch64_getrandom(dest: &mut [u8]) -> core::result::Result<(), getrandom::Error> {
+    use core::arch::asm;
+    let max_retry = 10;
+    let to_fill = dest.len();
+    let rounds= to_fill / 8 as usize; // 64Bits can be read once from RNDR
+    let remain = to_fill - (rounds * 8 as usize);
+    let mut _dest: Vec<u8> = Vec::with_capacity(to_fill);
+
+    for _ in 0..rounds {
+        let mut val: u64 = 0;
+        let mut nzcv: u64 = 1;
+        for _ in 0..max_retry {
+            unsafe {
+                asm!(
+                    "mrs {val}, rndr",
+                    "mrs {nzcv}, nzcv",
+                    val = out(reg) val,
+                    nzcv = out(reg) nzcv,
+                );
+            }
+            if nzcv == 0 {
+                break;
+            }
+        }
+        if nzcv == 0 {
+            let mut byte: u8;
+            for b in 0..8 {
+                byte = ((val >> (b * 8)) & 0xFFFF) as u8;
+                _dest.push(byte);
+            }
+        } else {
+            return Err(getrandom::Error::FAILED_RDRAND);
+        }
+    }
+    //NOTE: This will get fixed on refactoring
+    //NOTE: ATM -> Broken randomnes
+    if remain != 0 {
+        for _ in 0..remain {
+            _dest.push(1u8);
+        }
+    }
+    dest.copy_from_slice(&_dest[0..to_fill]);
+    Ok(())
 }
 
 pub fn Init() {

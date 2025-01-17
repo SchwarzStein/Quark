@@ -61,7 +61,7 @@ fn lazy_cell_new<T>() -> SyncUnsafeCell<AttestationDriver<T>>
 
 pub trait AttestationDriverT {
     fn init(&mut self) {}
-    fn get_report(&self, _challenge: &Challenge) -> Result<Responce>
+    fn get_report(&self, _challenge: &mut Challenge) -> Result<Responce>
         { todo!("Trait not implemented") }
     fn valid_challenge(_challenge: &mut Challenge) -> bool
     { todo!("Trait not implemented") }
@@ -85,7 +85,7 @@ impl<T: AttestationDriverT> AttestationDriver<T> {
     pub fn get_report(&self, challenge: &mut Challenge) -> Result<Responce> {
         if T::valid_challenge(challenge) {
             debug!("VM: Challege is valid - request report.");
-            return self.tee_attester.get_report(&challenge);
+            return self.tee_attester.get_report(challenge);
         }
         error!("VM: challenge was not in valid format.");
         Err(Error::SystemErr(SysErr::EINVAL))
