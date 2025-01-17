@@ -41,7 +41,7 @@ impl AttestationDriverT for ArmCcaHwAttester {
         true
     }
 
-    fn get_report(&self, challenge: &Challenge) -> Result<Responce> {
+    fn get_report(&self, challenge: &mut Challenge) -> Result<Responce> {
         let attestation_token_max_size = tee::get_attestation(challenge)
             .expect("Failed to attest challenge.");
         debug!("VM: Token expected size:{:#0x}", attestation_token_max_size);
