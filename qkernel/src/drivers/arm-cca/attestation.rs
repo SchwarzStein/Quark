@@ -23,6 +23,11 @@ use crate::qlib::common::{Result, Error};
 use crate::qlib::kernel::arch::tee;
 use super::{Responce, Challenge};
 
+#[derive(Default, Serialize, Deserialize)]
+struct CcaEvidence {
+    token: Vec<u8>,
+}
+
 #[derive(Default)]
 pub struct ArmCcaHwAttester;
 
@@ -65,7 +70,14 @@ impl AttestationDriverT for ArmCcaHwAttester {
         if res == false {
             panic!("VM: Attestation faild - no token retrived");
         }
-        Ok(token)
+        //TODO: Refactor me
+        let mut temp: Vec<u8> = vec![0u8; token.len()]; 
+        temp.copy_from_slice(&token[..]);
+        let cca_token = CcaEvidence { token: temp };
+        let cca_token_str = serde_json::to_string(&cca_token)
+            .expect("VM: AtD - failed to serialize CcaToken");
+        debug!("VM: CcaToken:{:?}", cca_token_str);
+        Ok(cca_token_str)
     }
 }
 
@@ -75,6 +87,7 @@ impl ArmCcaHwAttester {
 
     #[inline(always)]
     pub(self) fn __out_of_range(len: usize) -> bool {
+        debug!("VM: Cca-AtD - challenge length:{}", len);
         if len < Self::MIN_CHALLENGE_SIZE
         || len > Self::CHALLENGE_SIZE {
             return true;
