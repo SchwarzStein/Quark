@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::GuestHostSharedAllocator;
-use alloc::vec::Vec;
+use alloc::{vec::Vec, string::String};
 use lazy_static::lazy_static;
 use core::cell::SyncUnsafeCell;
 use spin::{Mutex, lazy::Lazy};
@@ -22,7 +22,7 @@ use crate::qlib::{common::{Result, Error},
     linux_def::SysErr};
 
 pub type Challenge = Vec<u8>;
-pub type Responce = Vec<u8, GuestHostSharedAllocator>;
+pub type Responce = String;
 
 #[cfg(target_arch = "aarch64")]
 #[path = "./arm-cca/attestation.rs"]
@@ -83,6 +83,7 @@ impl<T: AttestationDriverT> AttestationDriver<T> {
     }
 
     pub fn get_report(&self, challenge: &mut Challenge) -> Result<Responce> {
+        debug!("VM: Cca-AtD - get report with challenge:{:?}", challenge);
         if T::valid_challenge(challenge) {
             debug!("VM: Challege is valid - request report.");
             return self.tee_attester.get_report(challenge);
