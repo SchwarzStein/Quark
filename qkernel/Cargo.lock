@@ -740,6 +740,7 @@ dependencies = [
  "tdx-tdcall",
  "x86_64",
  "xmas-elf",
+ "zeroize",
 ]
 
 [[package]]
