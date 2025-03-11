@@ -742,6 +742,7 @@ dependencies = [
  "xmas-elf",
  "yaxpeax-arch",
  "yaxpeax-x86",
+ "zeroize",
 ]
 
 [[package]]
