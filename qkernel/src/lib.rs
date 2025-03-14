@@ -28,6 +28,7 @@
 #![recursion_limit = "256"]
 #![allow(invalid_reference_casting)]
 #![feature(btreemap_alloc)]
+#![feature(sync_unsafe_cell)]
 
 #[macro_use]
 extern crate alloc;
@@ -149,6 +150,7 @@ mod interrupt;
 pub mod kernel_def;
 pub mod rdma_def;
 mod syscalls;
+pub mod drivers;
 
 #[cfg(feature = "snp")]
 use crate::qlib::kernel::arch::tee::sev_snp::ghcb::*;
