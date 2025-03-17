@@ -23,6 +23,8 @@ use super::InitDataStatus;
 pub mod tdx;
 #[cfg(target_arch = "aarch64")]
 pub mod cca;
+#[cfg(target_arch = "x86_64")]
+pub mod sev;
 
 pub trait AttesterT {
     fn get_tee_evidence(&self, challenge: &mut Challenge) -> Result<Response>;

@@ -71,6 +71,8 @@ extern crate kbs_types;
 extern crate getrandom;
 extern crate zeroize;
 extern crate sha2;
+#[cfg(target_arch = "x86_64")]
+extern crate serde_big_array;
 
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};

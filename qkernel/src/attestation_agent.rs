@@ -38,6 +38,8 @@ use crate::{drivers::tee::attestation::{Challenge, Response},
 use self::attester::tdx::TdxAttester;
 #[cfg(target_arch = "aarch64")]
 use self::attester::cca::CcaAttester;
+#[cfg(target_arch = "x86_64")]
+use self::attester::sev::SevAttester;
 use self::kbc::{kbc_build, Kbc};
 use self::util::{AttestationToken, InitDataStatus};
 use self::{attester::Attester, config::AaConfig};
@@ -211,6 +213,8 @@ impl AttestationAgent {
             CCMode::TDX => Some(Box::new(TdxAttester::default())),
             #[cfg(target_arch = "aarch64")]
             CCMode::Cca => Some(Box::new(CcaAttester::default())),
+            #[cfg(target_arch = "x86_64")]
+            CCMode::SevSnp => Some(Box::new(SevAttester::default())),
             _ => {
                 error!("AA: Attestation currently not implmented for:{:?}", mode);
                 None

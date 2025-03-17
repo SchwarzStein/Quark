@@ -45,6 +45,8 @@ tdx-tdcall = { version = "0.2.1", optional = true }
 yaxpeax-x86 = { version = "1.2.2", default-features = false, optional = true }
 yaxpeax-arch = { version = "0.2.7", default-features = false, optional = true }
 getrandom = {version = "0.2", features = ["rdrand"]}
+uuid = {version = "1.8.0", default-features = false, features = ["serde"]}
+serde-big-array = "0.5.1"
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 getrandom = {version = "0.2", features = ["custom"]}
