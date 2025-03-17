@@ -17,7 +17,12 @@ use lazy_static::lazy_static;
 use core::cell::SyncUnsafeCell;
 use spin::{Mutex, lazy::Lazy};
 
-use crate::{qlib::{common::Result, kernel::arch::tee::get_tee_type}, CCMode};
+use crate::{qlib::{common::Result,
+    kernel::arch::tee::get_tee_type}, CCMode};
+#[cfg(target_arch = "x86_64")]
+use crate::attestation_agent::attester::sev::SevAttester;
+#[cfg(target_arch = "x86_64")]
+use super::sev::attestation::SevAttestation;
 
 pub type Challenge = Vec<u8>;
 pub type Response = String;
@@ -63,7 +68,9 @@ pub struct AttestationDriver {
 impl Default for AttestationDriver {
     fn default() -> Self {
         let (tee_attester, tee_type): (Box<dyn AttestationDriverT>, CCMode) = match get_tee_type() {
-            _ => todo!("add me"),
+            #[cfg(target_arch = "x86_64")]
+            crate::CCMode::SevSnp => (Box::new(SevAttestation::default()), CCMode::SevSnp),
+            _ => panic!("not supported"),
         };
         Self {
             tee_attester,
@@ -99,7 +106,9 @@ impl AttestationDriver {
 
     fn tee_challenge_exp(&self) -> (usize, usize) {
         let res = match self.tee_type {
-            _ => todo!("add me"),
+            #[cfg(target_arch = "x86_64")]
+            CCMode::SevSnp => SevAttester::challenge_range(),
+            _ => panic!("add me"),
         };
         res
     }
