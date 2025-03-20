@@ -17,12 +17,14 @@ use lazy_static::lazy_static;
 use core::cell::SyncUnsafeCell;
 use spin::{Mutex, lazy::Lazy};
 
-use crate::{qlib::{common::{Error, Result}, kernel::arch::tee::get_tee_type, linux_def::SysErr}, CCMode};
+use crate::{qlib::{common::{Error, Result}, kernel::arch::tee::get_tee_type,
+    linux_def::SysErr}, CCMode};
 #[cfg(all(target_arch = "x86_64", feature = "tdx"))]
 use super::tdx::attestation::TdxAttestation;
-
 #[cfg(target_arch = "aarch64")]
 use super::cca::attestation::ArmCcaHwAttester;
+#[cfg(all(target_arch = "x86_64", feature = "snp"))]
+use super::sev::attestation::SevAttestation;
 
 pub type Challenge = Vec<u8>;
 pub type Report = Vec<u8>;
@@ -72,6 +74,8 @@ impl Default for AttestationDriver {
             CCMode::TDX => (Box::new(TdxAttestation::default()), CCMode::TDX),
             #[cfg(target_arch = "aarch64")]
             CCMode::Cca => (Box::new(ArmCcaHwAttester::default()), CCMode::Cca),
+            #[cfg(all(target_arch = "x86_64", feature = "snp"))]
+            crate::CCMode::SevSnp => (Box::new(SevAttestation::default()), CCMode::SevSnp),
             _ => panic!("not supported"),
         };
         Self {
@@ -116,6 +120,8 @@ impl AttestationDriver {
             CCMode::TDX => (0usize, 64usize),
             #[cfg(target_arch = "aarch64")]
             CCMode::Cca => (32usize, 64usize),
+            #[cfg(target_arch = "x86_64")]
+            CCMode::SevSnp => (0usize, 64usize),
             _ => panic!("add me"),
         };
         res
