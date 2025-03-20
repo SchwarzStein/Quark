@@ -19,6 +19,7 @@ pub mod kbc;
 
 use core::convert::{TryFrom, TryInto};
 
+use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use crate::attestation_agent::util::connection::{tls_connection,
@@ -174,6 +175,8 @@ impl AttestationAgent {
                 error!("AA: No AA instance for CC mode:{:?}", mode);
                 None
             },
+            #[cfg(target_arch = "aarch64")]
+            CCMode::Cca => Some(Box::new(CcaAttester::default())),
             _ => {
                 error!("AA: Attestation currently not implmented for:{:?}", mode);
                 None
