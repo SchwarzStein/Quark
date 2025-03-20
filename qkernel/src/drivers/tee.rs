@@ -17,3 +17,5 @@ pub mod attestation;
 pub mod tdx;
 #[cfg(target_arch = "aarch64")]
 pub mod cca;
+#[cfg(all(target_arch = "x86_64", feature = "snp"))]
+pub mod sev;
