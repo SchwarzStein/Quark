@@ -21,6 +21,9 @@ use crate::{qlib::{common::{Error, Result}, kernel::arch::tee::get_tee_type, lin
 #[cfg(all(target_arch = "x86_64", feature = "tdx"))]
 use super::tdx::attestation::TdxAttestation;
 
+#[cfg(target_arch = "aarch64")]
+use super::cca::attestation::ArmCcaHwAttester;
+
 pub type Challenge = Vec<u8>;
 pub type Report = Vec<u8>;
 pub type Response = String;
@@ -67,6 +70,8 @@ impl Default for AttestationDriver {
         let (tee_attester, tee_type): (Box<dyn AttestationDriverT>, CCMode) = match get_tee_type() {
             #[cfg(all(target_arch = "x86_64", feature = "tdx"))]
             CCMode::TDX => (Box::new(TdxAttestation::default()), CCMode::TDX),
+            #[cfg(target_arch = "aarch64")]
+            CCMode::Cca => (Box::new(ArmCcaHwAttester::default()), CCMode::Cca),
             _ => panic!("not supported"),
         };
         Self {
@@ -109,6 +114,8 @@ impl AttestationDriver {
         let res = match self.tee_type {
             #[cfg(target_arch = "x86_64")]
             CCMode::TDX => (0usize, 64usize),
+            #[cfg(target_arch = "aarch64")]
+            CCMode::Cca => (32usize, 64usize),
             _ => panic!("add me"),
         };
         res
