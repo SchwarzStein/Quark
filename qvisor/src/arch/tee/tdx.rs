@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use core::sync::atomic::Ordering;
+use std::io::{Read, Write};
 
 use crate::qlib::linux_def::MemoryDef;
 use crate::runc::runtime::vm_type::tdx::VmTDX;
@@ -27,10 +28,11 @@ use qlib::config::CCMode;
 static mut DUMMY_U64: u64 = 0u64;
 use kvm_bindings::kvm_memory_attributes;
 use kvm_ioctls::TDXExit;
+use vsock::{VsockStream, VsockAddr};
 const KVM_MEMORY_ATTRIBUTE_PRIVATE: u64 = 1 << 3;
 
 pub struct Tdx<'a> {
-    kvm_exits_list: [VcpuExit<'a>; 2],
+    kvm_exits_list: [VcpuExit<'a>; 3],
     hypercalls_list: [u16; 2],
     pub cc_mode: CCMode,
     pub share_space_table_addr: Option<u64>,
@@ -49,6 +51,7 @@ impl ConfCompExtension for Tdx<'_> {
         let _self: Box<dyn ConfCompExtension> = Box::new(Tdx {
             kvm_exits_list: [
                 VcpuExit::TDXExit(kvm_ioctls::TDXExit::MapGpa(0, 0, unsafe { &mut DUMMY_U64 })),
+                VcpuExit::TDXExit(kvm_ioctls::TDXExit::GetQuote(0, 0, unsafe { &mut DUMMY_U64 })),
                 VcpuExit::MemoryFault(0, 0, true),
             ],
             hypercalls_list: [
@@ -132,6 +135,24 @@ impl ConfCompExtension for Tdx<'_> {
     }
 }
 
+#[repr(C, packed)]
+#[derive(Debug)]
+struct TdxQuoteBuffer {
+    version: u64,
+    status: u64,
+    input_len: u32,
+    output_len: u32,
+    report_buf: [u8; TdxQuoteBuffer::QUOTE_BODY_SIZE],
+}
+
+impl TdxQuoteBuffer {
+    const QUOTE_SIZE: usize = 2 * 0x1000; //2*4K Page
+    const QUOTE_HDR_SIZE: usize = (2 * 8) +(2 * 4);
+    const QUOTE_BODY_SIZE: usize = TdxQuoteBuffer::QUOTE_SIZE - TdxQuoteBuffer::QUOTE_HDR_SIZE;
+    const GET_QUOTE_STATUS_SUCCESS: u64 = 0u64;
+    const GET_QUOTE_STATUS_IN_FLIGHT: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+}
+
 impl Tdx<'_> {
     fn _confidentiality_type(&self) -> CCMode {
         self.cc_mode
@@ -210,6 +231,41 @@ impl Tdx<'_> {
         const TDG_VP_VMCALL_INVALID_OPERAND: u64 = 0x8000000000000000;
         const TDG_VP_VMCALL_ALIGN_ERROR: u64 = 0x8000000000000002;
         match exit {
+            TDXExit::GetQuote(r12, _r13, status_code) => {
+                let shared_bit = S_BIT_MASK.load(Ordering::Acquire);
+                let gpa = (*r12) & !shared_bit;
+                let addr = VsockAddr::new(2, 4050); //(CID, QGS-Port)
+                let slice = unsafe {
+                    std::slice::from_raw_parts_mut(gpa as *mut u8, TdxQuoteBuffer::QUOTE_SIZE)
+                };
+                let qb = unsafe {
+                    &mut *(gpa as *mut TdxQuoteBuffer)
+                };
+                let mut stream = VsockStream::connect(&addr)
+                    .expect("Failed to connect with QG-Service");
+                let _ = stream.write_all(&slice[TdxQuoteBuffer::QUOTE_HDR_SIZE..1048]) //Report, stored in QUOTE_BODY
+                    .map_err(|e| panic!("Faile to send quote buffer: {:?}", e));
+                let mut next = TdxQuoteBuffer::QUOTE_HDR_SIZE;
+                loop {
+                    let r = stream.read(&mut slice[next..])
+                        .map_err(|e| panic!("Failed to read from QG-Service: {:?}", e))
+                        .unwrap();
+                    if r == 0 {
+                        break;
+                    } else {
+                        next += r;
+                    }
+                }
+                if next == TdxQuoteBuffer::QUOTE_HDR_SIZE {
+                    error!("VMM: QG-Service did not provided any Quote.");
+                    qb.output_len = 0u32;
+                } else {
+                    qb.status = TDG_VP_VMCALL_SUCCESS;
+                    qb.output_len = (next - TdxQuoteBuffer::QUOTE_HDR_SIZE) as u32;
+                    debug!("Success - qb:{:?}", qb);
+                }
+                **status_code = 0x0;
+            },
             TDXExit::MapGpa(in_r12, in_r13, status_code) => {
                 let in_r12 = *in_r12;
                 let in_r13 = *in_r13;

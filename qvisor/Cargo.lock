@@ -161,6 +161,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "cfg_aliases"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+
+[[package]]
 name = "chrono"
 version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -645,7 +651,7 @@ dependencies = [
 [[package]]
 name = "kvm-ioctls"
 version = "0.11.0"
-source = "git+https://github.com/123abcpp/kvm-ioctls.git?branch=tdx#2d1d4007ecef7123742b00521aef061c47e5dda7"
+source = "git+https://github.com/chl337/kvm-ioctls.git?branch=tdx#41a09e181f4a48fa88e53ccf579540fa313ff960"
 dependencies = [
  "kvm-bindings",
  "libc",
@@ -669,9 +675,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.137"
+version = "0.2.174"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc7fcc620a3bff7cdd7a365be3376c97191aeaccc2a603e600951e452615bf89"
+checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
 
 [[package]]
 name = "libelf"
@@ -744,6 +750,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -763,7 +778,7 @@ dependencies = [
  "cc",
  "cfg-if 1.0.0",
  "libc",
- "memoffset",
+ "memoffset 0.6.5",
 ]
 
 [[package]]
@@ -776,7 +791,20 @@ dependencies = [
  "cc",
  "cfg-if 1.0.0",
  "libc",
- "memoffset",
+ "memoffset 0.6.5",
+]
+
+[[package]]
+name = "nix"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags 2.6.0",
+ "cfg-if 1.0.0",
+ "cfg_aliases",
+ "libc",
+ "memoffset 0.9.1",
 ]
 
 [[package]]
@@ -1020,6 +1048,7 @@ dependencies = [
  "time 0.3.7",
  "uuid 0.8.2",
  "vmm-sys-util",
+ "vsock",
  "x86_64",
  "xmas-elf",
 ]
@@ -1380,7 +1409,7 @@ dependencies = [
 [[package]]
 name = "tdx"
 version = "0.1.0"
-source = "git+https://github.com/123abcpp/tdx.git?branch=quark-tdx-1.1#bcbb523ee1e103198e45b010bf1a3f19593bf704"
+source = "git+https://github.com/123abcpp/tdx.git?branch=quark-tdx-1.1_update_kvm-ioctl#2f43dc31c544aa9992d10f25f2c0e60588791a74"
 dependencies = [
  "bitflags 2.6.0",
  "kvm-bindings",
@@ -1572,6 +1601,16 @@ name = "volatile"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3ca98349dda8a60ae74e04fd90c7fb4d6a4fbe01e6d3be095478aa0b76f6c0c"
+
+[[package]]
+name = "vsock"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e8b4d00e672f147fc86a09738fadb1445bd1c0a40542378dfb82909deeee688"
+dependencies = [
+ "libc",
+ "nix 0.29.0",
+]
 
 [[package]]
 name = "wasi"
