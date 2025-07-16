@@ -836,13 +836,15 @@ pub extern "C" fn rust_main(
 
     /***************** can't run any qcall before this point ************************************/
 
+    static mut READY_2START: AtomicUsize = AtomicUsize::new(0);
     if id == 0 {
         IOWait();
-    };
-
-    if id == 1 {
+    } else if id == 1 {
         debug!("heap starts at:{:#x}", heapStart);
         self::Init();
+        unsafe {
+            READY_2START.store(1, Ordering::SeqCst);
+        }
         if autoStart {
             CreateTask(StartRootContainer as u64, ptr::null(), false);
         }
@@ -851,7 +853,18 @@ pub extern "C" fn rust_main(
             self::InitLoader();
         }
     }
-
+    loop {
+        let state = unsafe {
+            READY_2START.load(Ordering::SeqCst)
+        };
+        if state == 1 {
+            break;
+        } else {
+            unsafe{
+                core::arch::asm!("nop");
+            }
+        }
+    }
     WaitFn();
 }
 
