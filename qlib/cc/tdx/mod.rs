@@ -3,6 +3,8 @@ use crate::qlib::linux_def::*;
 use core::sync::atomic::{AtomicU64, Ordering};
 use tdx_tdcall::tdx::*;
 use x86_64::VirtAddr;
+use crate::qlib::QRwLock;
+use crate::qlib::Result;
 
 /// The S_BIT_MASK indicating shared physical addresses
 pub static S_BIT_MASK: AtomicU64 = AtomicU64::new(0);
@@ -87,6 +89,13 @@ pub fn set_memory_shared_2mb(virt_addr: VirtAddr, npages: u64) {
             tdvmcall_halt();
         }
     }
+   // let npages = if virt_addr.as_u64() == MemoryDef::FILE_MAP_OFFSET {
+   //     10u64
+   // } else {
+   //     npages
+    if virt_addr.as_u64() == MemoryDef::FILE_MAP_OFFSET {
+        return; // We will accept them later
+    };
     match tdx_tdcall::tdx::tdvmcall_mapgpa(
         true,
         virt_addr.as_u64(),
@@ -98,4 +107,72 @@ pub fn set_memory_shared_2mb(virt_addr: VirtAddr, npages: u64) {
             tdvmcall_halt();
         }
     }
+}
+
+
+lazy_static! {
+    // Refere to the size of FILE_MAP in MemoryDef
+    static ref FMAP_ACCESSED: [QRwLock<u128>; 6] = [QRwLock::new(0), QRwLock::new(0),
+        QRwLock::new(0), QRwLock::new(0), QRwLock::new(0),
+        QRwLock::new(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFF7000)];
+}
+// ATM only from Private to Shared
+pub(in crate::qlib) fn try_accept(addr: u64, _as_hshared: bool) -> Result<bool> {
+    let (npages, bucket_range, fmap) = match addr {
+        //TODO:FIX ME
+        MemoryDef::FILE_MAP_OFFSET..=MemoryDef::HEAP_OFFSET => { (9, 128 * 9 * MemoryDef::TWO_MB, true) }, // Convert next 24 MB
+        _ => { todo!("Not Implemented") }
+    };
+
+    let mut entry = 0;
+    let mut mask: u128 = 0x0;
+    let mut virt_addr: u64 = 0;
+    if fmap {
+        for i in 0..FMAP_ACCESSED.len() {
+            let level = i as u64 + 1u64;
+            //TODO: add unit test for edges
+            if addr < MemoryDef::FILE_MAP_OFFSET + (level * bucket_range) {
+                entry = i;
+                let bit = (addr - (MemoryDef::FILE_MAP_OFFSET + (entry as u64 * bucket_range)))
+                    / (npages * MemoryDef::TWO_MB);
+                mask = 1 << bit;
+                virt_addr = MemoryDef::FILE_MAP_OFFSET + (entry as u64 * bucket_range)
+                    + (bit * npages * MemoryDef::TWO_MB);
+                debug!("Try Accept: Addr:{:#0x} - BaseAddr:{:#0x} - Entry:{:#0x} - Mask:{:#0x}",
+                addr, virt_addr, entry, mask);
+                break;
+            }
+        }
+    } else { todo!("Not Implemented"); }
+
+    let try_update = {
+        let bucket = FMAP_ACCESSED[entry].read();
+        (*bucket & mask ) == 0u128
+    };
+
+    if try_update {
+        let mut bucket = FMAP_ACCESSED[entry].write();
+        //Maybe previous has accepted the range?
+        if (*bucket & mask ) != 0u128 {
+            return Ok(false);
+        } else {
+            match tdx_tdcall::tdx::tdvmcall_mapgpa(
+                true,
+                virt_addr,
+                (npages * MemoryDef::PAGE_SIZE_2M) as usize,
+            ) {
+                Ok(_) => {
+                    *bucket |= mask;
+                    return Ok(true);
+                },
+                Err(_) => {
+                    tdvmcall_io_write_8(TEST_OUTPUT_PORT as u16, 0x3);
+                    tdvmcall_halt();
+                }
+            }
+        }
+    }
+    // The range is already accepted
+    Ok(false)
+
 }

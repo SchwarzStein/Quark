@@ -16,6 +16,8 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use lazy_static::lazy_static;
 use crate::qlib::linux_def::MemoryDef;
 use crate::qlib::config::CCMode;
+use crate::qlib::common::{Result, Error};
+use crate::qlib::SysErr;
 
 lazy_static! {
     //TODO: It should be only set once
@@ -127,4 +129,14 @@ pub fn boot_others(_boot_help_data: u64, _vcpu_count: u64, _pc: u64) {
         //
         // Impliment according to architecture
         //
+}
+
+/// TDX: Request MapGPA for page range
+pub fn try_accept(addr: u64, as_host_shared: bool) -> Result<bool> {
+    if is_protected_address(addr) && as_host_shared {
+        error!("VM: Addr:{:#0x} is in protected range", addr);
+            return Err(Error::SysError(SysErr::EINVAL));
+    }
+    crate::qlib::cc::tdx::try_accept(addr, as_host_shared)
+
 }

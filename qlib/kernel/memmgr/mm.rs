@@ -53,7 +53,7 @@ use super::*;
 use crate::qlib::kernel::{SHARESPACE, asm::*};
 use crate::qlib::vcpu_mgr::VcpuMode;
 
-use crate::qlib::kernel::arch::tee::{is_cc_active, guest_physical_address};
+use crate::qlib::kernel::arch::tee::{is_cc_active, guest_physical_address, is_hw_tee, try_accept};
 
 pub struct MMMapping {
     pub vmas: AreaSet<VMA>,
@@ -1076,6 +1076,11 @@ impl MemoryManager {
                     let writeable = vma.effectivePerms.Write();
                     let page = { super::super::PAGE_MGR.AllocPage(true).unwrap() };
                     debug!("VM: Install Page - copy pha:{:#0x} to page:{:#0x}", phyAddr, page);
+                    // In TEE we have to procativly accept shared memory.
+                    if is_hw_tee() {
+                        let _ = try_accept(phyAddr, true).expect("VM: Accept whent wrong");
+                    }
+
                     CopyPage(page, phyAddr);
                     debug!("VM: Install Page - copy done.");
 
