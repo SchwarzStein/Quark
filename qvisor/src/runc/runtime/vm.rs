@@ -132,6 +132,7 @@ impl VirtualMachine {
     pub const VDSO_PATH: &'static str = "/usr/local/bin/vdso.so";
 
     pub fn Init(args: Args, cc_mode: CCMode) -> Result<Self> {
+        use std::time::Instant;
         PerfGoto(PerfType::Other);
         let (vm_type, kernel_elf) = match cc_mode {
             CCMode::None => VmNormal::init(Some(&args))?,
@@ -144,7 +145,10 @@ impl VirtualMachine {
         let umask = Self::Umask();
         info!("VMM: Reset umask from {:o} to {}", umask, 0);
         info!("VMM: VM will be created with parameters:{:?}", vm_type);
+        let start_creation = Instant::now();
         let vm = vm_type.create_vm(kernel_elf, args).expect("VM: faield to create.");
+        let elapsed = start_creation.elapsed().as_nanos();
+        error!("Perf: CreateVM-{:?}-time-{:?}", cc_mode, elapsed);
         info!("VMM: Vm creation done.");
         PerfGofrom(PerfType::Other);
         Ok(vm)

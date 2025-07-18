@@ -721,6 +721,8 @@ pub extern "C" fn rust_main(
     self::qlib::kernel::asm::fninit();
     if id == 0 {
         //if in any cc machine, shareSpaceAddr is reused as CCMode
+        let mut _accept_sh_m_start: i64 = 0i64;
+        let mut _accept_sh_m_end: i64 = 0i64;
         let mode = CCMode::from(shareSpaceAddr);
         #[cfg(feature = "tdx")]
         if mode == CCMode::TDX {
@@ -739,7 +741,9 @@ pub extern "C" fn rust_main(
             set_sbit_mask();
             PAGE_MGR.SetValue(PAGE_MGR_HOLDER.Addr());
             //Tdcall convert shared memory
+            _accept_sh_m_start = Tsc::RawRdtsc();
             InitShareMemory();
+            _accept_sh_m_end = Tsc::RawRdtsc();
         }
         GLOBAL_ALLOCATOR.InitPrivateAllocator(mode);
         if mode != CCMode::None {
@@ -780,7 +784,9 @@ pub extern "C" fn rust_main(
         debug!("init host epoll fd finished");
         VDSO.Initialization(vdsoParamAddr);
         debug!("init vdso finished");
-
+        let diff_accept_mem = TSC.NormalizeMe(_accept_sh_m_end - _accept_sh_m_start);
+        let time_ns = Tsc::Scale(diff_accept_mem) * 1000;
+        error!("Perf: CreateAcceptSharedMemory-time-{:?}", time_ns);
         // release other vcpus
         HyperCall64(qlib::HYPERCALL_RELEASE_VCPU, 0, 0, 0, 0);
     } else {

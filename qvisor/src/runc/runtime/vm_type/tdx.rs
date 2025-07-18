@@ -17,6 +17,7 @@ use std::{
     os::fd::{AsRawFd, FromRawFd},
     sync::{atomic::Ordering, Arc},
 };
+use std::time::Instant;
 
 use kvm_bindings::kvm_enable_cap;
 use kvm_ioctls::{Cap, Kvm, VmFd};
@@ -224,6 +225,8 @@ impl VmType for VmTDX {
             .unwrap();
         let _vcpu_total = VMS.lock().vcpuCount;
         let _auto_start = VMS.lock().args.as_ref().unwrap().AutoStart;
+
+        let start_create = Instant::now();
         let vcpus = self
             .vm_vcpu_initialize(
                 &_kvm,
@@ -235,8 +238,13 @@ impl VmType for VmTDX {
                 None,
             )
             .expect("VM creation failed on vcpu creation.");
+        let now = start_create.elapsed().as_nanos();
+        error!("Perf: CreateVCPU-{}-time-{:?}", _vcpu_total, now);
+        let start_finalize = Instant::now();
         self.post_init_update(&mut vm_fd)?;
         self.post_vm_initialize(&mut vm_fd)?;
+        let now = start_finalize.elapsed().as_nanos();
+        error!("Perf: CreateVmFinalize-time-{:?}", now);
         let _vm_type: Box<dyn VmType> = self;
         let vm = VirtualMachine {
             kvm: _kvm,
@@ -332,13 +340,21 @@ impl VmType for VmTDX {
             .mem_area_info(MemAreaType::SharedHeapArea)
             .unwrap();
 
+       // let init_shrd20mb: u64 = 0x140_0000;
         set_user_memory_region_tdx(
             vm_fd,
             shared_heap_base_guest,
             shared_heap_base_host,
-            shared_heap_region,
+         shared_heap_region,//   init_shrd20mb,//
             4,
         );
+     //   set_user_memory_region_tdx(
+     //       vm_fd,
+     //       shared_heap_base_guest + init_shrd20mb,
+     //       shared_heap_base_host + init_shrd20mb,
+     //       shared_heap_region - init_shrd20mb,
+     //       7,
+     //   );
         set_user_memory_region_tdx(
             vm_fd,
             MemoryDef::TDVF_OFFSET,

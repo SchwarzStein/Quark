@@ -187,6 +187,10 @@ impl Tsc {
         self.offset.store(offset, Ordering::SeqCst);
     }
 
+    pub fn NormalizeMe(&self, _tsc: i64) -> i64 {
+        _tsc - self.offset.load(Ordering::SeqCst)
+    }
+
     pub fn Rdtsc(&self) -> i64 {
         return Self::RawRdtsc() - self.offset.load(Ordering::SeqCst);
     }
