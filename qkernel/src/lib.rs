@@ -802,16 +802,17 @@ pub extern "C" fn rust_main(
                     | XCr0Flags::MPK,
             );
         }
-    }
-    let initialized_num = IS_INITIALIZED_COUNTER.fetch_add(1, Ordering::Release);
-    if initialized_num + 1 == vcpuCnt {
-        IS_INITIALIZED.store(true, Ordering::Release);
-    }
-    if IS_INITIALIZED.load(Ordering::Acquire) {
-        use crate::qlib::addr::Addr;
-        KERNEL_PAGETABLE
-            .UnmapWith1G(Addr(0), Addr(8 * MemoryDef::ONE_GB), &*PAGE_MGR)
-            .expect("Failed to unmap firmware address!");
+
+        let initialized_num = IS_INITIALIZED_COUNTER.fetch_add(1, Ordering::Release);
+        if initialized_num + 1 == vcpuCnt {
+            IS_INITIALIZED.store(true, Ordering::Release);
+        }
+        if IS_INITIALIZED.load(Ordering::Acquire) {
+            use crate::qlib::addr::Addr;
+            KERNEL_PAGETABLE
+                .UnmapWith1G(Addr(0), Addr(8 * MemoryDef::ONE_GB), &*PAGE_MGR)
+                .expect("Failed to unmap firmware address!");
+        }
     }
     SHARESPACE.IncrVcpuSearching();
     taskMgr::AddNewCpu();
