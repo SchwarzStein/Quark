@@ -96,7 +96,7 @@ impl HostAllocator {
 
         let hostInitHeapStart = self.hostInitHeapAddr.load(Ordering::Relaxed);
         let hostInitHeapEnd = hostInitHeapStart + MemoryDef::HOST_INIT_HEAP_SIZE as u64;
-        *self.HostInitAllocator() = ListAllocator::New(hostInitHeapStart as _, hostInitHeapEnd);
+        *self.HostInitAllocator() = ListAllocator::New(hostInitHeapStart as _, hostInitHeapEnd, true);
         //reserve first 4KB gor the listAllocator
         let size = core::mem::size_of::<ListAllocator>();
         self.HostInitAllocator().Add(
@@ -176,7 +176,7 @@ impl HostAllocator {
             MemoryDef::GUEST_PRIVATE_INIT_HEAP_SIZE
         };
         let guestPrivHeapEnd = guestPrivHeapStart + heap_size;
-        *self.GuestPrivateAllocator() = ListAllocator::New(guestPrivHeapStart, guestPrivHeapEnd);
+        *self.GuestPrivateAllocator() = ListAllocator::New(guestPrivHeapStart, guestPrivHeapEnd, true);
 
         let size = core::mem::size_of::<ListAllocator>();
         self.GuestPrivateAllocator().Add(
@@ -195,7 +195,7 @@ impl HostAllocator {
             );
 
             let ioHeapEnd = MemoryDef::HEAP_END + MemoryDef::IO_HEAP_SIZE;
-            *self.IOAllocator() = ListAllocator::New(MemoryDef::HEAP_END as _, ioHeapEnd);
+            *self.IOAllocator() = ListAllocator::New(MemoryDef::HEAP_END as _, ioHeapEnd, true);
             self.IOAllocator().Add(
                 MemoryDef::HEAP_END as usize,
                 MemoryDef::IO_HEAP_SIZE as usize,

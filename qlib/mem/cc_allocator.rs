@@ -113,7 +113,7 @@ impl HostAllocator {
     #[inline]
     pub fn HeapRange(&self) -> (u64, u64) {
         let allocator = self.GuestPrivateAllocator();
-        return (allocator.heapStart, allocator.heapEnd);
+        return (allocator.heapStart.load(Ordering::SeqCst), allocator.heapEnd.load(Ordering::SeqCst));
     }
 }
 

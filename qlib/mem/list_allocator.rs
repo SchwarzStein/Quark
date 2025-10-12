@@ -407,8 +407,9 @@ pub struct ListAllocator {
     pub free: AtomicUsize,
     pub allocated: AtomicUsize,
     pub bufSize: AtomicUsize,
-    pub heapStart: u64,
-    pub heapEnd: u64,
+    pub heapStart: AtomicU64,
+    pub heapEnd: AtomicU64,
+    pub filled: AtomicBool,
     pub counts: [AtomicUsize; 36],
     pub maxnum: [AtomicUsize; 36],
     //pub errorHandler: Arc<OOMHandler>
@@ -421,12 +422,12 @@ pub trait OOMHandler {
 
 impl Default for ListAllocator {
     fn default() -> Self {
-        return Self::New(0, 0);
+        return Self::New(0, 0, true);
     }
 }
 
 impl ListAllocator {
-    pub const fn New(heapStart: u64, heapEnd: u64) -> Self {
+    pub const fn New(_heapStart: u64, _heapEnd: u64, _filled: bool) -> Self {
         let bufs: [CachePadded<QMutex<FreeMemBlockMgr>>; CLASS_CNT] = [
             CachePadded::new(QMutex::new(FreeMemBlockMgr::New(0, 0))),
             CachePadded::new(QMutex::new(FreeMemBlockMgr::New(0, 1))),
@@ -453,8 +454,9 @@ impl ListAllocator {
             free: AtomicUsize::new(0),
             allocated: AtomicUsize::new(0),
             bufSize: AtomicUsize::new(0),
-            heapStart,
-            heapEnd,
+            heapStart: AtomicU64::new(_heapStart),
+            heapEnd: AtomicU64::new(_heapEnd),
+            filled: AtomicBool::new(_filled),
             initialized: AtomicBool::new(false),
             counts: [
                 AtomicUsize::new(0),
@@ -653,10 +655,10 @@ impl ListAllocator {
     }
 
     pub fn enlarge(&mut self, newHeapStart: u64, newHeapEnd: u64) {
-        assert!(self.heapStart >= newHeapStart);
-        assert!(self.heapEnd <= newHeapEnd);
-        self.heapStart = newHeapStart;
-        self.heapEnd = newHeapEnd;
+        assert!(self.heapStart.load(Ordering::SeqCst) >= newHeapStart);
+        assert!(self.heapEnd.load(Ordering::SeqCst) <= newHeapEnd);
+        self.heapStart.store(newHeapStart, Ordering::SeqCst);
+        self.heapEnd.store(newHeapEnd, Ordering::SeqCst);
     }
 }
 
@@ -702,14 +704,58 @@ unsafe impl GlobalAlloc for ListAllocator {
         /*if size > 1 << 21 {
             panic!("alloc size is {}", layout.size());
         }*/
+        let hstart = self.heapStart.load(Ordering::SeqCst);
+        let sheap_end = MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET
+                    + MemoryDef::GUEST_HOST_SHARED_HEAP_SIZE;
+        let sheap = if hstart == MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET {
+                true
+            } else {
+                false
+            };
+        let (hend, hsize) = if sheap {
+            (MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET
+             + MemoryDef::GUEST_HOST_SHARED_HEAP_SIZE,
+             MemoryDef::GUEST_HOST_SHARED_HEAP_SIZE)
+        } else {
+            (MemoryDef::GUEST_PRIVATE_RUNNING_HEAP_OFFSET
+             + MemoryDef::GUEST_PRIVATE_RUNNING_HEAP_SIZE,
+             MemoryDef::GUEST_PRIVATE_RUNNING_HEAP_SIZE)
+        };
 
-        let ret = self
-            .heap
-            .lock()
-            .alloc(layout)
-            .ok()
-            .map_or(0 as *mut u8, |allocation| allocation.as_ptr()) as u64;
-
+        let ret: u64;
+        loop {
+            let res = self
+                .heap
+                .lock()
+                .alloc(layout);
+            if res.is_err() && self.filled.load(Ordering::SeqCst) == false
+            && self.heapEnd.load(Ordering::SeqCst) < hend {
+                let _gpa = self.heapEnd.load(Ordering::SeqCst) + 1u64;
+                let _res = crate::qlib::kernel::arch::tee::set_gpa_status(_gpa, sheap);
+                match _res {
+                    Ok(false) => {
+                        continue;
+                    },
+                    Ok(true) => {
+                        self.Add(_gpa as usize, (MemoryDef::TWO_MB * 8u64) as usize);
+                        self.heapEnd.fetch_add(MemoryDef::TWO_MB * 8u64, Ordering::SeqCst);
+                        if self.heapEnd.load(Ordering::SeqCst) - hstart == hsize {
+                            self.filled.store(true, Ordering::SeqCst);
+                        }
+                        continue;
+                    }
+                    Err(_) => {
+                        ret = res.ok()
+                            .map_or(0 as *mut u8, |allocation| allocation.as_ptr()) as u64;
+                        break;
+                    }
+                };
+            } else {
+                ret = res.ok()
+                    .map_or(0 as *mut u8, |allocation| allocation.as_ptr()) as u64;
+                break;
+            }
+        }
         if ret == 0 {
             self.handleError(size as u64, layout.align() as u64);
             loop {}

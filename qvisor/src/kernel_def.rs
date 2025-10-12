@@ -419,7 +419,6 @@ unsafe impl core::alloc::Allocator for GuestHostSharedAllocator {
             return Ok(NonNull::new_unchecked(slice));
         }
     }
-        
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         let ptr = ptr.as_ptr();
