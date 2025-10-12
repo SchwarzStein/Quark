@@ -53,7 +53,8 @@ use super::*;
 use crate::qlib::kernel::{SHARESPACE, asm::*};
 use crate::qlib::vcpu_mgr::VcpuMode;
 
-use crate::qlib::kernel::arch::tee::{is_cc_active, guest_physical_address};
+use crate::qlib::kernel::arch::tee::{is_cc_active, guest_physical_address,
+    is_hw_tee, set_gpa_status};
 
 pub struct MMMapping {
     pub vmas: AreaSet<VMA>,
@@ -1076,6 +1077,10 @@ impl MemoryManager {
                     let writeable = vma.effectivePerms.Write();
                     let page = { super::super::PAGE_MGR.AllocPage(true).unwrap() };
                     debug!("VM: Install Page - copy pha:{:#0x} to page:{:#0x}", phyAddr, page);
+                    if is_hw_tee() {
+                        let _ = set_gpa_status(phyAddr, true)
+                            .expect("VM: Set GPA status whent wrong.");
+                    }
                     CopyPage(page, phyAddr);
                     debug!("VM: Install Page - copy done.");
 
