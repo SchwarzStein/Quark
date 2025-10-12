@@ -698,14 +698,10 @@ fn InitLoader() {
 
 #[cfg(feature = "tdx")]
 //Need to initialize PAGEMGR(pagepool for page allocator) and kernel page table in advance
-fn InitShareMemory() {
-    set_memory_shared_2mb(
-        VirtAddr::new(MemoryDef::FILE_MAP_OFFSET),
-        MemoryDef::FILE_MAP_SIZE / MemoryDef::PAGE_SIZE_2M,
-    );
+fn InitShareMemory(npages_2mb: u64) {
     set_memory_shared_2mb(
         VirtAddr::new(MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET),
-        MemoryDef::GUEST_HOST_SHARED_HEAP_SIZE / MemoryDef::PAGE_SIZE_2M,
+        npages_2mb,
     );
 }
 
@@ -724,11 +720,6 @@ pub extern "C" fn rust_main(
         let mode = CCMode::from(shareSpaceAddr);
         #[cfg(feature = "tdx")]
         if mode == CCMode::TDX {
-            //Memory is accpeted in firmware
-            /*tdx_tdcall::tdx::td_accept_memory(
-                MemoryDef::PHY_LOWER_ADDR,
-                MemoryDef::IO_HEAP_END - MemoryDef::PHY_LOWER_ADDR,
-            );*/
             GLOBAL_ALLOCATOR.SwitchToPrivateRunningHeap();
             unsafe {
                 KERNEL_PAGETABLE.Init(PageTables::Init(CurrentKernelTable()));
@@ -738,8 +729,9 @@ pub extern "C" fn rust_main(
             interrupt::init();
             set_sbit_mask();
             PAGE_MGR.SetValue(PAGE_MGR_HOLDER.Addr());
-            //Tdcall convert shared memory
-            InitShareMemory();
+            //Tdcall convert initial shared memory
+            let sh_2mb_pages: u64 = 96;
+            InitShareMemory(sh_2mb_pages);
         }
         GLOBAL_ALLOCATOR.InitPrivateAllocator(mode);
         if mode != CCMode::None {

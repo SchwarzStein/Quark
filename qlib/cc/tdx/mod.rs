@@ -62,6 +62,44 @@ pub fn check_tdx_support_on_guest() -> bool {
 
 pub const TEST_OUTPUT_PORT: u64 = 0x3f;
 
+
+pub fn tee_try_gpa_range_set(gpa_start: u64, npages: u64, to_prv: bool) -> crate::qlib::common::Result<bool> {
+    let gpa = VirtAddr::new(gpa_start);
+    if to_prv == false {
+        set_memory_shared_2mb(gpa, npages);
+    } else {
+        accept_memory_private_2mb(gpa, npages);
+    }
+    Ok(true)
+}
+
+pub fn accept_memory_private_2mb(virt_addr: VirtAddr, npages: u64) {
+    assert!(npages >= 1);
+    let pt = &KERNEL_PAGETABLE;
+    (virt_addr.as_u64()
+        ..(virt_addr + MemoryDef::PAGE_SIZE_2M.checked_mul(npages as u64).unwrap()).as_u64())
+        .step_by(MemoryDef::PAGE_SIZE_2M as usize)
+        .for_each(|a| {
+            let virt = VirtAddr::new(a);
+            match pt.smash(virt, &*PAGE_MGR, true) {
+                Ok(_) => (),
+                Err(_) => tdvmcall_io_write_8(TEST_OUTPUT_PORT as u16, 0x1),
+            };
+        });
+
+    match tdx_tdcall::tdx::tdvmcall_mapgpa(
+        false,
+        virt_addr.as_u64(),
+        (npages * MemoryDef::PAGE_SIZE_2M) as usize,
+    ) {
+        Ok(_) => (),
+        Err(_) => {
+            tdvmcall_io_write_8(TEST_OUTPUT_PORT as u16, 0x3);
+            tdvmcall_halt();
+        }
+    }
+}
+
 pub fn set_memory_shared_2mb(virt_addr: VirtAddr, npages: u64) {
     assert!(npages >= 1);
     let pt = &KERNEL_PAGETABLE;
