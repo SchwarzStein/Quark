@@ -807,6 +807,12 @@ impl HostInodeOp {
                 return Ok(count as i64);
             }
 
+            let inode_id = _f.Dirent.Inode()
+                .StableAttr().InodeId;
+            if let Some(ret) = crate::check_tee_reserv_list(inode_id, dsts, offset) {
+                return Ok(ret);
+            }
+
             if SHARESPACE.config.read().UringIO {
                 if self.BufWriteEnable() {
                     // try to gain the lock once, release immediately

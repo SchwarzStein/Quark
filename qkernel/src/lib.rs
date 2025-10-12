@@ -952,6 +952,10 @@ use alloc::vec::Vec;
 pub fn try_attest(config_path: Option<String>, envv: Option<Vec<String>>) {
     crate::attestation_agent::AttestationAgent::try_attest(config_path, envv);
 }
+use crate::qlib::linux_def::IoVec;
+pub fn check_tee_reserv_list(i: u64, d: &mut [IoVec], o: i64) -> Option<i64> {
+    crate::attestation_agent::AttestationAgent::check_tee_reserv_list(i, d, o)
+}
 
 fn StartExecProcess(fd: i32, process: Process) -> ! {
     let (tid, entry, userStackAddr, kernelStackAddr) = { LOADER.ExecProcess(process).unwrap() };
