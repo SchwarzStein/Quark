@@ -764,12 +764,8 @@ pub fn InitShareMemory() {
     let ghcb = ghcb_option.as_mut().unwrap();
     ghcb.init(true);
     ghcb.set_memory_shared_2mb(
-        VirtAddr::new(MemoryDef::FILE_MAP_OFFSET),
-        MemoryDef::FILE_MAP_SIZE / MemoryDef::PAGE_SIZE_2M,
-    );
-    ghcb.set_memory_shared_2mb(
         VirtAddr::new(MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET),
-        MemoryDef::GUEST_HOST_SHARED_HEAP_SIZE / MemoryDef::PAGE_SIZE_2M,
+        96u64
     );
     ghcb.set_memory_shared_4kb(
         VirtAddr::new(MemoryDef::GHCB_OFFSET + MemoryDef::PAGE_SIZE),

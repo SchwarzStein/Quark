@@ -154,6 +154,31 @@ pub fn pvalidate(addr: VirtAddr, size: PvalidateSize, validated: bool) -> Result
     }
 }
 
+pub(in crate::qlib::kernel::arch) fn tee_try_gpa_range_set(gpa_addres: u64,
+    npages_2mb: usize, _shared: bool) -> crate::qlib::common::Result<bool> {
+    use self::ghcb::{GHCB, GhcbHandle};
+    let log_available = crate::qlib::kernel::Kernel::LOG_AVAILABLE
+        .load(core::sync::atomic::Ordering::Acquire);
+    let vcpuid = if log_available {
+        crate::qlib::kernel::asm::GetVcpuId()
+    } else {
+        0
+    };
+    if _shared {
+        let ghcb_option: &mut Option<GhcbHandle<'_>> = &mut *GHCB[vcpuid].lock();
+        let ghcb = ghcb_option.as_mut().unwrap();
+        ghcb.set_memory_shared_2mb(VirtAddr::new(gpa_addres), npages_2mb as u64);
+    } else {
+        for i in 0..npages_2mb {
+            use crate::qlib::MemoryDef;
+            let _ret = pvalidate(VirtAddr::new(i as u64 * MemoryDef::TWO_MB + gpa_addres),
+                PvalidateSize::Size2M, true);
+        }
+    }
+    Ok(true)
+}
+
+
 pub struct SVMExitDef {}
 impl SVMExitDef {
     pub const SVM_EXIT_READ_CR0: u64 = 0x000;

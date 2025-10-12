@@ -664,10 +664,11 @@ pub extern "C" fn rust_main(
             #[cfg(feature = "snp")]
             if mode == CCMode::SevSnp {
                 LOG_AVAILABLE.store(false, Ordering::Release);
-                for i in (MemoryDef::PHY_LOWER_ADDR..MemoryDef::IO_HEAP_END)
-                        .step_by(MemoryDef::PAGE_SIZE as usize)
+                let init_pv_h = MemoryDef::GUEST_PRIVATE_RUNNING_HEAP_OFFSET + (176 * MemoryDef::ONE_MB);
+                for i in (MemoryDef::GUEST_PRIVATE_RUNNING_HEAP_OFFSET..init_pv_h)
+                        .step_by(MemoryDef::PAGE_SIZE_2M as usize)
                     {
-                        let _ret = pvalidate(VirtAddr::new(i), PvalidateSize::Size4K, true);
+                        let _ret = pvalidate(VirtAddr::new(i), PvalidateSize::Size2M, true);
                     }
                     GLOBAL_ALLOCATOR.SwitchToPrivateRunningHeap();
                     unsafe {
