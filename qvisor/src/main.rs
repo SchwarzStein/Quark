@@ -220,4 +220,6 @@ fn main() {
     }
 }
 
+use crate::qlib::linux_def::IoVec;
 pub fn try_attest(_config_path: Option<String>, _envv: Option<Vec<String>>) {  }
+pub fn check_tee_reserv_list(_i: u64, _v: &mut [IoVec], _o: i64) -> Option<i64> { None }
