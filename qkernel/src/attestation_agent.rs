@@ -26,9 +26,9 @@ use crate::attestation_agent::util::connection::{tls_connection,
     ConnectionClient, Connector};
 use crate::attestation_agent::util::ResourceUri;
 use crate::qlib::common::{Result, Error};
-use crate::qlib::linux_def::{ATType, Flags};
+use crate::qlib::linux_def::{ATType, Flags, IoVec};
+use crate::qlib::mutex::QRwLock;
 use crate::syscalls::sys_file::{close, createAt};
-use crate::syscalls::sys_write::Write;
 use crate::Task;
 use crate::{drivers::tee::attestation::{Challenge, Response},
     qlib::{config::CCMode, kernel::arch::tee::{get_tee_type,
@@ -38,6 +38,12 @@ use self::attester::tdx::TdxAttester;
 use self::kbc::{kbc_build, Kbc};
 use self::util::{AttestationToken, InitDataStatus};
 use self::{attester::Attester, config::AaConfig};
+use hashbrown::HashMap;
+
+lazy_static! {
+    pub static ref AT_SECRETS: QRwLock<HashMap<u64, Vec<u8>>>
+        = QRwLock::new(HashMap::new());
+}
 
 pub trait AttestationAgentT {
     fn get_hw_tee_type(&self) -> Option<CCMode> {
@@ -114,29 +120,45 @@ impl AttestationAgent {
         use crate::qlib::linux_def::{ModeType, FileMode};
         use crate::qlib::cstring::CString;
         let task = Task::Current();
-        let mode = ModeType::MODE_USER_READ | ModeType::MODE_GROUP_READ
-            | ModeType::MODE_USER_WRITE | ModeType::MODE_GROUP_WRITE;
+        let mode = ModeType::MODE_USER_READ | ModeType::MODE_GROUP_READ;
         let flag = Flags::O_CREAT | Flags::O_WRONLY;
-        for (_name, _content) in list {
+        for (_name, _content) in list.into_iter() {
             let fname = CString::New(_name.as_str());
             let addr = fname.Ptr();
-            let content = core::str::from_utf8(_content.as_slice())
-                .expect("valid utf8 contnet");
-            let content = CString::New(content);
             let fd = createAt(task, ATType::AT_FDCWD,
                 addr, flag as u32, FileMode(mode)).expect("crate failed");
             if fd > 0i32 {
-                let size: i64 = content.Len() as i64;
-                let addr = content.Ptr();
-                let res = Write(task, fd, addr, size).map_err(|e| {
-                    panic!("VM: write content failed:{:?}", e);
-                });
-                debug!("VM: wrote in file:{:?} bytes", res);
+                let inode_id = task.GetFile(fd)
+                    .expect("VM: Failed to get the file for fd")
+                    .Dirent.Inode().StableAttr().InodeId;
+                AT_SECRETS.write().insert(inode_id, _content);
+                debug!("VM: wrote in secret list file:{:?}-inode:{}",_name, inode_id);
                 close(task, fd).expect("VM: failed to close fd");
             } else {
                 panic!("VM: AA - failed to create :{:?} on guest", fname.Slice());
             }
         }
+    }
+
+    pub fn check_tee_reserv_list(inode_id: u64, dsts: &mut [IoVec], offset: i64) -> Option<i64> {
+        if let Some(entry)  = AT_SECRETS.read().get(&inode_id) {
+            let size = IoVec::NumBytes(dsts) as i64;
+            let entry_len = entry.len() as i64;
+            if entry_len <= offset {
+                return Some(0);
+            }
+            let ret = if entry_len - offset <= size {
+                entry_len - offset
+            } else {
+                size
+            };
+            debug!("VM: Post Att: Try read secret: entry-len{} - dest:{}", entry_len, ret);
+            let task = Task::Current();
+            let _ = task.CopyDataOutToIovs(&entry[offset as usize..(offset + ret) as usize], dsts, true)
+            .expect("VM: Post Att: copy secret to user failed");
+            return Some(ret as i64);
+        };
+        return None;
     }
 
     fn get_resource_list(&self) -> Vec<(String, ResourceUri)> {
