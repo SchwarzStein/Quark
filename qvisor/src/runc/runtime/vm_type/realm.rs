@@ -500,7 +500,7 @@ impl VmType for VmCcRealm {
         let vm_fd = kvm.create_vm_with_type(vm_type)
             .map_err(|e| Error::IOError(format!("Failed to crate a kvm-vm with error:{:?}", e)))?;
 
-        self.configure_realm(&vm_fd);
+
         let (vgic_fd, its_fd): (DeviceFd, DeviceFd) = self
             .create_realm_dependency_devices(&vm_fd)
             .expect("Can not create VM - failed to create devices.");
@@ -525,6 +525,7 @@ impl VmType for VmCcRealm {
     }
 
     fn post_memory_initialize(&mut self, vm_fd: &mut VmFd) -> Result<(), Error> {
+        self.configure_realm(&vm_fd);
         let (_, gh_base, size) = self.vm_resources
             .mem_area_info(MemAreaType::PrivateHeapArea).unwrap();
         info!("VM: Init Realm-IPA range memory - GustPrivateHeap - GuestBase:{:#0x} - Size:{}MB.",

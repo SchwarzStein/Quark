@@ -21,6 +21,7 @@ use crate::{qlib::{config::CCMode, self, linux_def::MemoryDef, common::Error,
             QUARK_CONFIG, VMS, runc::runtime::vm_type::{realm::VmCcRealm, VmType},
             kvm_vcpu::KVMVcpu};
 use super::super::vcpu::kvm_vcpu::KvmAarch64Reg::{X0, X1};
+use crate::arch::vm::tee::kvm::KvmArmVcpuFeature;
 
 pub struct RealmCca<'a> {
     /// No special KVM Exits known at the momment
@@ -95,6 +96,7 @@ impl ConfCompExtension for RealmCca<'_> {
         //TODO: check extension support
         kvi.features[0] |= 0x01 << KVM_ARM_VCPU_PTRAUTH_ADDRESS;
         kvi.features[0] |= 0x01 << KVM_ARM_VCPU_PTRAUTH_GENERIC;
+        kvi.features[0] |= 0x01 << KvmArmVcpuFeature::VcpuRec as u8;
         if vcpu_id > 0 {
             kvi.features[0] |= 0x01 << KVM_ARM_VCPU_POWER_OFF;
         }

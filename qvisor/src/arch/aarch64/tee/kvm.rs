@@ -56,13 +56,13 @@ pub enum KvmCapArmRmeVm {
     InitIpaRealm = 2u32,
     PopulateRealm = 3u32,
     ActivateRealm = 4u32,
-    CapRme = 300,
+    CapRme = 243,
 }
 
 #[repr(u64)]
 pub enum KvmArmVcpuFeature {
     HasEl2 = 7u64,  //Support nested virtualization
-    VcpuRec = 8u64, // vCPU REC state
+    VcpuRec = 9u64, // vCPU REC state
 }
 
 #[repr(u32)]
