@@ -1,3 +1,4 @@
+SHELL := /bin/bash
 #
 # OUTPUT PATHS
 #
@@ -133,15 +134,22 @@ qvisor_snp_debug:
 	make -C ./qvisor TOOLCHAIN=$(RUST_TOOLCHAIN) snp_debug
 
 install:
-	-sudo cp -f $(QKERNEL_RELEASE) $(QBIN_DIR)/
-	-sudo cp -f $(QUARK_RELEASE) $(QBIN_DIR)/quark
-	-sudo cp -f $(QUARK_RELEASE) $(QBIN_DIR)/containerd-shim-quark-v1
-	-sudo cp -f $(QKERNEL_DEBUG) $(QBIN_DIR)/
-	-sudo cp -f $(QUARK_DEBUG) $(QBIN_DIR)/quark_d
-	-sudo cp -f $(QUARK_DEBUG) $(QBIN_DIR)/containerd-shim-quarkd-v1
-	sudo cp -f $(VDSO) $(QBIN_DIR)/vdso.so
-	sudo mkdir -p $(QCONFIG_DIR)
-	sudo cp -f config.json $(QCONFIG_DIR)
+	@if [ -f "$(QKERNEL_RELEASE)" ]; then sudo cp -f "$(QKERNEL_RELEASE)" "$(QBIN_DIR)/" && echo "copied $(QKERNEL_RELEASE)"; fi
+	@if [ -f "$(QUARK_RELEASE)" ]; then \
+	    sudo cp -f "$(QUARK_RELEASE)" "$(QBIN_DIR)/quark"; \
+	    sudo cp -f "$(QUARK_RELEASE)" "$(QBIN_DIR)/containerd-shim-quark-v1"; \
+	    echo "copied $(QUARK_RELEASE)"; \
+	fi
+	@if [ -f "$(QKERNEL_DEBUG)" ]; then sudo cp -f "$(QKERNEL_DEBUG)" "$(QBIN_DIR)/" && echo "copied $(QKERNEL_DEBUG)"; fi
+	@if [ -f "$(QUARK_DEBUG)" ]; then \
+	    sudo cp -f "$(QUARK_DEBUG)" "$(QBIN_DIR)/quark_d"; \
+	    sudo cp -f "$(QUARK_DEBUG)" "$(QBIN_DIR)/containerd-shim-quarkd-v1"; \
+	    echo "copied $(QUARK_DEBUG)"; \
+	fi
+	@if [ -f "$(VDSO)" ]; then sudo cp -f "$(VDSO)" "$(QBIN_DIR)/vdso.so" && echo "copied $(VDSO)"; fi
+	@if [ -f "$(TDSHIM)" ]; then sudo cp -f "$(TDSHIM)" "$(QBIN_DIR)/shim.bin" && echo "copied $(TDSHIM)"; fi
+	@sudo mkdir -p "$(QCONFIG_DIR)"
+	@sudo cp -f config.json "$(QCONFIG_DIR)" && echo "copied config.json"
 
 cuda_make:
 	make -C cudaproxy release
@@ -151,4 +159,3 @@ cuda_make:
 tdx_make:
 	git submodule update --init --recursive
 	make -C td-shim quark_shim
-	sudo cp -f $(TDSHIM) $(QBIN_DIR)/shim.bin
