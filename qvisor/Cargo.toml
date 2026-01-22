@@ -95,6 +95,9 @@ optional = true
 [profile.dev]
 opt-level = 0
 
+[profile.release.package.tdx]
+opt-level = 0
+
 [profile.release]
 opt-level = 3
 debug = 0
