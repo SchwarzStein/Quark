@@ -268,7 +268,7 @@ pub fn SingletonInit() {
         //error!("error message");
 
         if is_cc_active(){
-            if get_tee_type() != CCMode::TDX || get_tee_type() != CCMode::SevSnp {
+            if !(get_tee_type() == CCMode::TDX || get_tee_type() == CCMode::SevSnp) {
                 KERNEL_PAGETABLE.Init(PageTables::Init(CurrentUserTable()));
                 interrupt::InitSingleton();
                 PAGE_MGR.SetValue(PAGE_MGR_HOLDER.Addr());
