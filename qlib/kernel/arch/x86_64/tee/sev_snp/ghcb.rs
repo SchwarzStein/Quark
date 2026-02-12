@@ -489,13 +489,14 @@ impl<'a> GhcbHandle<'a> {
         }
     }
 
-    pub fn set_memory_shared_2mb(&mut self, virt_addr: VirtAddr, npages: u64) {
-        let mut time = 0u64;
-        let mut npages_current = npages;
+    pub fn smash_shared_memory_2mb_pt(&mut self, virt_addr: VirtAddr, npages: u64) {
         assert!(npages >= 1);
         let pt = &KERNEL_PAGETABLE;
         (virt_addr.as_u64()
-            ..(virt_addr + MemoryDef::PAGE_SIZE_2M.checked_mul(npages as u64).unwrap()).as_u64())
+            ..(virt_addr + MemoryDef::PAGE_SIZE_2M
+                .checked_mul(npages as u64)
+                .unwrap())
+                .as_u64())
             .step_by(MemoryDef::PAGE_SIZE_2M as usize)
             .for_each(|a| {
                 let virt = VirtAddr::new(a);
@@ -503,18 +504,13 @@ impl<'a> GhcbHandle<'a> {
                     Ok(_) => (),
                     Err(_) => unsafe { early_panic(0x4, 0x14) },
                 };
-                for i in 0..512 {
-                    let new_virt = virt + i * MemoryDef::PAGE_SIZE;
-                    match pvalidate(new_virt, PvalidateSize::Size4K, false) {
-                        Ok(_) => (),
-                        Err(_) => unsafe { early_panic(0x4, 0x24) },
-                    }
-                }
             });
 
         match pt.clear_c_bit_address_range(
             virt_addr,
-            virt_addr + MemoryDef::PAGE_SIZE_2M.checked_mul(npages as u64).unwrap(),
+            virt_addr + MemoryDef::PAGE_SIZE_2M
+                .checked_mul(npages as u64)
+                .unwrap(),
             &*PAGE_MGR,
         ) {
             Ok(_) => (),
@@ -525,6 +521,29 @@ impl<'a> GhcbHandle<'a> {
                 }
             }
         }
+    }
+
+    pub fn set_memory_shared_2mb(&mut self, virt_addr: VirtAddr, npages: u64) {
+        let mut time = 0u64;
+        let mut npages_current = npages;
+        assert!(npages >= 1);
+        (virt_addr.as_u64()
+            ..(virt_addr + MemoryDef::PAGE_SIZE_2M
+                .checked_mul(npages as u64)
+                .unwrap())
+                .as_u64())
+            .step_by(MemoryDef::PAGE_SIZE_2M as usize)
+            .for_each(|a| {
+                let virt = VirtAddr::new(a);
+                for i in 0..512 {
+                    let new_virt = virt + i * MemoryDef::PAGE_SIZE;
+                    match pvalidate(new_virt, PvalidateSize::Size4K, false) {
+                        Ok(_) => (),
+                        Err(_) => unsafe { early_panic(0x4, 0x24) },
+                    }
+                }
+            });
+
         loop {
             let mut stop = false;
             let pages = if npages_current >= PSC_ENTRY_LEN {
@@ -545,13 +564,14 @@ impl<'a> GhcbHandle<'a> {
         }
     }
 
-    pub fn set_memory_shared_4kb(&mut self, virt_addr: VirtAddr, npages: u64) {
-        let mut time = 0u64;
-        let mut npages_current = npages;
+    pub fn smash_shared_memory_4kb_pt(&mut self, virt_addr: VirtAddr, npages: u64) {
         assert!(npages >= 1);
         let pt = &KERNEL_PAGETABLE;
         (virt_addr.as_u64()
-            ..(virt_addr + MemoryDef::PAGE_SIZE_4K.checked_mul(npages as u64).unwrap()).as_u64())
+            ..(virt_addr + MemoryDef::PAGE_SIZE_4K
+                .checked_mul(npages as u64)
+                .unwrap())
+                .as_u64())
             .step_by(MemoryDef::PAGE_SIZE_4K as usize)
             .for_each(|a| {
                 let virt = VirtAddr::new(a);
@@ -563,15 +583,13 @@ impl<'a> GhcbHandle<'a> {
                     Ok(_) => (),
                     Err(_) => unsafe { early_panic(0x4, 0x15) },
                 };
-                match pvalidate(virt, PvalidateSize::Size4K, false) {
-                    Ok(_) => (),
-                    Err(_) => unsafe { early_panic(0x4, 0x24) },
-                }
             });
 
         match pt.clear_c_bit_address_range(
             virt_addr,
-            virt_addr + MemoryDef::PAGE_SIZE_4K.checked_mul(npages as u64).unwrap(),
+            virt_addr + MemoryDef::PAGE_SIZE_4K
+                .checked_mul(npages as u64)
+                .unwrap(),
             &*PAGE_MGR,
         ) {
             Ok(_) => (),
@@ -582,6 +600,25 @@ impl<'a> GhcbHandle<'a> {
                 }
             }
         }
+    }
+
+    pub fn set_memory_shared_4kb(&mut self, virt_addr: VirtAddr, npages: u64) {
+        let mut time = 0u64;
+        let mut npages_current = npages;
+        assert!(npages >= 1);
+        (virt_addr.as_u64()
+            ..(virt_addr + MemoryDef::PAGE_SIZE_4K
+                .checked_mul(npages as u64)
+                .unwrap())
+                .as_u64())
+            .step_by(MemoryDef::PAGE_SIZE_4K as usize)
+            .for_each(|a| {
+                let virt = VirtAddr::new(a);
+                match pvalidate(virt, PvalidateSize::Size4K, false) {
+                    Ok(_) => (),
+                    Err(_) => unsafe { early_panic(0x4, 0x24) },
+                }
+            });
         loop {
             let mut stop = false;
             let pages = if npages_current >= PSC_ENTRY_LEN {
@@ -763,9 +800,16 @@ pub fn InitShareMemory() {
     let ghcb_option: &mut Option<GhcbHandle<'_>> = &mut *GHCB[0].lock();
     let ghcb = ghcb_option.as_mut().unwrap();
     ghcb.init(true);
+    ghcb.smash_shared_memory_2mb_pt(
+        VirtAddr::new(MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET),
+        MemoryDef::GUEST_HOST_SHARED_HEAP_SIZE / MemoryDef::TWO_MB);
     ghcb.set_memory_shared_2mb(
         VirtAddr::new(MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET),
         96u64
+    );
+    ghcb.smash_shared_memory_2mb_pt(
+        VirtAddr::new(MemoryDef::GHCB_OFFSET + MemoryDef::PAGE_SIZE),
+        MemoryDef::PAGE_SIZE_2M / MemoryDef::PAGE_SIZE - 1,
     );
     ghcb.set_memory_shared_4kb(
         VirtAddr::new(MemoryDef::GHCB_OFFSET + MemoryDef::PAGE_SIZE),

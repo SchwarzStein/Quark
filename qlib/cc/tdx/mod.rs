@@ -100,7 +100,7 @@ pub fn accept_memory_private_2mb(virt_addr: VirtAddr, npages: u64) {
     }
 }
 
-pub fn set_memory_shared_2mb(virt_addr: VirtAddr, npages: u64) {
+pub fn smash_shared_memory_pt(virt_addr: VirtAddr, npages: u64) {
     assert!(npages >= 1);
     let pt = &KERNEL_PAGETABLE;
     (virt_addr.as_u64()
@@ -125,6 +125,9 @@ pub fn set_memory_shared_2mb(virt_addr: VirtAddr, npages: u64) {
             tdvmcall_halt();
         }
     }
+}
+
+pub fn set_memory_shared_2mb(virt_addr: VirtAddr, npages: u64) {
     match tdx_tdcall::tdx::tdvmcall_mapgpa(
         true,
         virt_addr.as_u64(),

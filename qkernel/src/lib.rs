@@ -138,7 +138,8 @@ use self::threadmgr::task_sched::*;
 use crate::qlib::kernel::Kernel::LOG_AVAILABLE;
 
 #[cfg(feature = "tdx")]
-use self::qlib::cc::tdx::{set_memory_shared_2mb, set_sbit_mask};
+use self::qlib::cc::tdx::{set_memory_shared_2mb, set_sbit_mask,
+    smash_shared_memory_pt};
 #[cfg(feature = "tdx")]
 use self::qlib::cc::*;
 #[cfg(feature = "tdx")]
@@ -791,6 +792,14 @@ pub extern "C" fn rust_main(
                 interrupt::init();
                 set_sbit_mask();
                 PAGE_MGR.SetValue(PAGE_MGR_HOLDER.Addr());
+
+                // We prepare the pagetable layout here - avoid later synchronisation issues.
+                // NOTE:Out current memory layout fits the assumtion - in case of changes
+                // adjust accordingly.
+                smash_shared_memory_pt(VirtAddr::new(MemoryDef::FILE_MAP_OFFSET),
+                    MemoryDef::FILE_MAP_SIZE / MemoryDef::TWO_MB);
+                smash_shared_memory_pt(VirtAddr::new(MemoryDef::GUEST_HOST_SHARED_HEAP_OFFSET),
+                    MemoryDef::GUEST_PRIVATE_HEAP_SIZE / MemoryDef::TWO_MB);
                 //Tdcall convert initial shared memory
                 let sh_2mb_pages: u64 = 96;
                 InitShareMemory(sh_2mb_pages);
