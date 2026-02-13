@@ -26,7 +26,7 @@ use crate::attestation_agent::util::connection::{tls_connection,
     ConnectionClient, Connector};
 use crate::attestation_agent::util::ResourceUri;
 use crate::qlib::common::{Result, Error};
-use crate::qlib::linux_def::{ATType, Flags, IoVec};
+use crate::qlib::linux_def::{ATType, Flags, IoVec, MemoryDef};
 use crate::qlib::mutex::QRwLock;
 use crate::syscalls::sys_file::{close, createAt};
 use crate::Task;
@@ -220,6 +220,38 @@ impl AttestationAgent {
                 None
             },
         }
+    }
+
+    pub fn try_get_cc_env(cc_env: &mut Vec<String>) {
+        let base = MemoryDef::CC_ENVV_BASE as *const u8;
+        let mut offset = 0;
+        loop {
+            let start = base;
+            let mut length = 0;
+            loop {
+                let byte = unsafe {
+                    core::ptr::read(start.add(offset + length))
+                };
+                if byte == 0 {
+                    break;
+                } else {
+                    length += 1;
+                }
+            }
+            if length == 0 {
+                break;
+            } else {
+                let str_slice = unsafe {
+                    core::slice::from_raw_parts(start.add(offset), length)
+                };
+                let _str = unsafe {
+                    String::from_utf8_unchecked(str_slice.to_vec())
+                };
+                cc_env.push(_str);
+                offset += length + 1; //Skip the prev \0
+            }
+        }
+        debug!("VM: Read cc-env:{:?}", cc_env);
     }
 }
 

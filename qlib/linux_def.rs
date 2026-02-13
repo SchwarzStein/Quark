@@ -3032,9 +3032,17 @@ impl MemoryDef {
     pub const RDMA_LOCAL_SHARE_OFFSET: u64 = Self::PHY_LOWER_ADDR + Self::QKERNEL_IMAGE_SIZE;
     pub const RDMA_LOCAL_SHARE_SIZE: u64 = 1024 * Self::ONE_MB; // 1GB
                                                                 // RDMA global share memory
+    // NOTE: in CC - the first page is reserved
     pub const RDMA_GLOBAL_SHARE_OFFSET: u64 =
         Self::RDMA_LOCAL_SHARE_OFFSET + Self::RDMA_LOCAL_SHARE_SIZE;
     pub const RDMA_GLOBAL_SHARE_SIZE: u64 = 2 * Self::ONE_MB;
+
+    //
+    // CC: EnvV area to pleace the CC-Attestation arguments
+    // - Part of the measurement
+    //
+    pub const CC_ENVV_BASE: u64 = Self::RDMA_GLOBAL_SHARE_OFFSET;
+    pub const CC_ENVV_SIZE: u64 = Self::PAGE_SIZE_4K;
 
     // file map area
     #[cfg(not(feature = "tdx"))]

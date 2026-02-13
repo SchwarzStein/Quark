@@ -23,6 +23,7 @@ pub enum MemAreaType {
     KernelArea,
     FileMapArea,
     HypercallMmioArea,
+    CcEnvArg,
 }
 
 impl fmt::Display for MemAreaType {
@@ -33,6 +34,7 @@ impl fmt::Display for MemAreaType {
             MemAreaType::KernelArea => write!(f, "Guest-kernel code area"),
             MemAreaType::FileMapArea => write!(f, "Host-shared file-map area"),
             MemAreaType::HypercallMmioArea => write!(f, "Guest hypercall-mmio area"),
+            MemAreaType::CcEnvArg => write!(f, "Guest-private area for CC Env arguments"),
         }
     }
 }

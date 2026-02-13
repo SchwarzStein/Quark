@@ -228,6 +228,31 @@ impl HostAllocator {
         );
     }
 
+    #[cfg(any(feature = "tdx", feature = "snp", target_arch = "aarch64"))]
+    pub fn MapCcEnvPage(&self) {
+        let cc_env_page_addr = unsafe {
+            let flags = libc::MAP_SHARED | libc::MAP_ANON | libc::MAP_FIXED;
+            libc::mmap(
+                MemoryDef::CC_ENVV_BASE as _,
+                MemoryDef::PAGE_SIZE as usize,
+                libc::PROT_READ | libc::PROT_WRITE,
+                flags,
+                -1,
+                0,
+            ) as u64
+        };
+        if cc_env_page_addr == libc::MAP_FAILED as u64 {
+            panic!("mmap: failed to get mapped memory area for cc_env page");
+        }
+
+        assert!(
+            cc_env_page_addr == MemoryDef::CC_ENVV_BASE,
+            "CC_ENVV_BASE expected address is {:x}, mmap address is {:x}",
+            MemoryDef::CC_ENVV_BASE,
+            cc_env_page_addr
+        );
+    }
+
     #[cfg(feature = "snp")]
     pub fn MapSevSnpSpecialPages(&self) {
         let host_init_cpuid_addr = unsafe {

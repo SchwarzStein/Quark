@@ -23,9 +23,9 @@ pub mod resources;
 #[cfg(feature = "snp")]
 pub mod sevsnp;
 
-use std::sync::Arc;
+use std::{ffi::CString, sync::Arc};
 use kvm_ioctls::{Kvm, VmFd};
-use crate::{arch::vm::vcpu::ArchVirtCpu, elf_loader::KernelELF, qlib::common::Error,
+use crate::{arch::vm::vcpu::ArchVirtCpu, elf_loader::KernelELF, qlib::{common::Error, linux_def::MemoryDef},
             runc::runtime};
 use runtime::{vm::VirtualMachine, loader::Args};
 
@@ -49,4 +49,26 @@ pub trait VmType: std::fmt::Debug {
                         share_space_addr: Option<u64>) -> Result<Vec<Arc<ArchVirtCpu>>, Error>;
     fn post_vm_initialize(&mut self, _vm_fd: &mut VmFd) -> Result<(), Error> { Ok(()) }
     fn post_init_update(&mut self, _vm_fd: &mut VmFd) -> Result<(), Error> { Ok(()) }
+    fn register_cc_env_args(&self, args: &Args) {
+        let cc_envs: Vec<CString> = args.Spec.process.env
+            .iter()
+            .filter(|e| e.contains("Q_AA_"))
+            .map(|e| CString::new(e.as_str())
+                .expect("CC_Env: interior null byte found."))
+            .collect();
+        let mut offset = 0;
+        let base = MemoryDef::CC_ENVV_BASE as *mut u8;
+        debug!("VMM: CC_ENV:{:?}", cc_envs);
+        for e in cc_envs {
+            let raw_bytes = e.as_bytes_with_nul();
+            let length = raw_bytes.len();
+            assert!((offset + length) as u64 <= MemoryDef::CC_ENVV_SIZE);
+            unsafe {
+                std::ptr::copy_nonoverlapping(raw_bytes.as_ptr(),
+                    base.add(offset), length);
+            }
+            offset += length;
+        }
+        debug!("VMM: Register CC_ENV in CC_ENVV_BASE Done");
+    }
 }

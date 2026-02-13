@@ -301,29 +301,29 @@ impl Loader {
             execProc,
         );
 
-        let envv = procArgs.Envv.clone();
-        let mut aa_env_conf: Vec<String> = Vec::new();
-        let mut attest = true;
-
-        for e in envv {
-            if e.contains("Q_AA_") {
-                if e.contains("NO_ATTEST") {
-                    attest = false;
-                    break;
+        if crate::qlib::kernel::arch::tee::is_hw_tee() {
+            let mut aa_env_conf: Vec<String> = Vec::new();
+            crate::try_get_cc_env(&mut aa_env_conf);
+            let mut attest = true;
+            for e in &aa_env_conf {
+                if e.contains("Q_AA_") {
+                    if e.contains("NO_ATTEST") {
+                        attest = false;
+                        break;
+                    }
                 }
-                aa_env_conf.push(e.clone());
             }
-        }
 
-        if attest {
-             let env_conf = if aa_env_conf.is_empty() {
-                 None
-             } else {
-                 Some(aa_env_conf)
-             };
-            crate::try_attest(None, env_conf);
-        } else {
-            error!("VM: No attestation has been performed.");
+            if attest {
+                 let env_conf = if aa_env_conf.is_empty() {
+                     None
+                 } else {
+                     Some(aa_env_conf)
+                 };
+                crate::try_attest(None, env_conf);
+            } else {
+                error!("VM: No attestation has been performed.");
+            }
         }
 
         let (entry, userStackAddr, kernelStackAddr) =

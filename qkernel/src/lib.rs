@@ -957,6 +957,9 @@ use alloc::vec::Vec;
 pub fn try_attest(config_path: Option<String>, envv: Option<Vec<String>>) {
     crate::attestation_agent::AttestationAgent::try_attest(config_path, envv);
 }
+pub fn try_get_cc_env(to_fill: &mut Vec<String>) {
+    crate::attestation_agent::AttestationAgent::try_get_cc_env(to_fill);
+}
 use crate::qlib::linux_def::IoVec;
 pub fn check_tee_reserv_list(i: u64, d: &mut [IoVec], o: i64) -> Option<i64> {
     crate::attestation_agent::AttestationAgent::check_tee_reserv_list(i, d, o)
