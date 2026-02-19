@@ -150,6 +150,10 @@ pub fn OpenPath(task: &mut Task, filename: &str, maxTraversals: u32) -> Result<(
         },
     )?;
 
+    #[cfg(feature = "qk")]
+    crate::integrity_agent::INTEGRITY_AGENT.lock().try_protect_item(&file, true)
+        .unwrap();
+
     file.Dirent
         .InotifyEvent(InotifyEvent::IN_OPEN, 0, EventType::InodeEvent);
 

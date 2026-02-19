@@ -41,6 +41,7 @@ use super::super::qlib::range::*;
 use super::super::syscalls::syscalls::*;
 use super::super::task::*;
 use super::super::util::cstring::*;
+use crate::integrity_agent::INTEGRITY_AGENT;
 use crate::qlib::kernel::util::sharedcstring::SharedCString;
 use fs::host::hostinodeop::HostInodeOp;
 use fs::host::util::Fcntl;
@@ -338,6 +339,8 @@ pub fn openAt(task: &Task, dirFd: i32, addr: u64, flags: u32) -> Result<i32> {
                     return Err(e);
                 }
             };
+
+            INTEGRITY_AGENT.lock().try_protect_item(&file, false)?;
 
             let newFd = task.NewFDFrom(
                 0,

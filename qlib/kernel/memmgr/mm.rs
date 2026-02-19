@@ -1072,14 +1072,18 @@ impl MemoryManager {
                 let vmaOffset = pageAddr - range.Start();
                 let fileOffset = vmaOffset + vma.offset; // offset in the file
                 debug!("VM: Install Page - HostIO - vma-offset:{:#0x} - file-offset:{:#0x}", vmaOffset, fileOffset);
-                let phyAddr = iops.MapFilePage(task, fileOffset)?;
-                if is_cc_active() {
+                let phyAddr = if iops.cached_protected() {
+                    iops.lock().get_cached_page(fileOffset)
+                } else {
+                    iops.MapFilePage(task, fileOffset)?
+                };
+                if is_cc_active() && !iops.cached_protected() {
                     let writeable = vma.effectivePerms.Write();
                     let page = { super::super::PAGE_MGR.AllocPage(true).unwrap() };
                     debug!("VM: Install Page - copy pha:{:#0x} to page:{:#0x}", phyAddr, page);
                     if is_hw_tee() {
                         let _ = set_gpa_status(phyAddr, true)
-                            .expect("VM: Set GPA status whent wrong.");
+                         .expect("VM: Set GPA status whent wrong.");
                     }
                     CopyPage(page, phyAddr);
                     debug!("VM: Install Page - copy done.");
@@ -1626,6 +1630,7 @@ impl MemoryManager {
                 &Range::New(vma.offset + ar.Start() - segAr.Start(), ar.Len()),
                 &currPerm,
                 precommit,
+                vma.private
             )?;
         }
         self.AddRssLock(ar);

@@ -70,9 +70,38 @@ pub struct MappableInternal {
     //addr mapping for shared pages from shared memory to private memory
     //need to write back to shared pages when munmap in cc. the value is (private memory,fileOffset,writeable)
     pub p2pmap: BTreeMap<u64, (u64, u64, bool)>,
+
+    //CC: the flag signals that the file is internaly cached
+    internaly_cached: bool,
+    //CC: Mapping of cached files (integrity protected) to private memory
+    pub cf2pm: BTreeMap<u64, u64>
 }
 
 impl MappableInternal {
+    pub fn insert_cached_mapping(&mut self, offset: u64, phy_addr: u64) {
+        let _res = self.cf2pm.insert(offset, phy_addr);
+        if _res.is_some() {
+            panic!("Attempt to double instert in cf2pm");
+        }
+    }
+
+    pub fn cached_protected_mapping(&mut self) {
+        self.internaly_cached = true;
+    }
+
+    pub fn is_cached_protected_mapping(&self) -> bool {
+        self.internaly_cached
+    }
+
+    #[cfg(feature = "qk")]
+    pub fn release_cached_protected(&mut self) {
+        use integrity_agent::IntegrityAgent;
+        for (_, address) in &self.cf2pm {
+            IntegrityAgent::cache_dealocate(*address)
+                .expect("VM: failed to dealocate protected cached block");
+        }
+    }
+
     pub fn WritebackPage(&self, phyAddr: u64) {
         match self.p2pmap.get(&phyAddr) {
             None => (),
@@ -246,6 +275,8 @@ impl Default for MappableInternal {
             mapping: AreaSet::New(0, core::u64::MAX),
             chunkrefs: BTreeMap::new(),
             p2pmap: BTreeMap::new(),
+            internaly_cached: false,
+            cf2pm: BTreeMap::new()
         };
     }
 }
@@ -253,11 +284,36 @@ impl Default for MappableInternal {
 #[derive(Default, Clone)]
 pub struct Mappable(Arc<QMutex<MappableInternal>>);
 
+impl PartialEq for Mappable {
+    fn eq(&self, other: &Self) -> bool {
+        return Arc::ptr_eq(&self.0, &other.0);
+    }
+}
+
+impl Eq for Mappable {}
+
+use core::hash::{Hash, Hasher};
+impl Hash for Mappable {
+    fn hash<H: Hasher> (&self, state: &mut H) {
+        Arc::as_ptr(&self.0).hash(state);
+    }
+}
+
 impl Deref for Mappable {
     type Target = Arc<QMutex<MappableInternal>>;
 
     fn deref(&self) -> &Arc<QMutex<MappableInternal>> {
         &self.0
+    }
+}
+
+impl Mappable {
+    pub fn Downgrade(&self) -> Weak<QMutex<MappableInternal>> {
+        Arc::downgrade(&self.0)
+    }
+
+    pub fn is_cached_protected_mapping(&self) -> bool {
+        self.lock().is_cached_protected_mapping()
     }
 }
 
@@ -318,7 +374,13 @@ impl Drop for HostInodeOpIntern {
         } else {
             None
         };
-
+        #[cfg(feature = "qk")]
+        if is_cc_active() {
+            use integrity_agent::INTEGRITY_AGENT;
+            if let Some(mappable) = self.mappable.clone() {
+                INTEGRITY_AGENT.lock().clear_cached_file(&mappable);
+            }
+        }
         if SHARESPACE.config.read().MmapRead {
             match self.mappable.take() {
                 None => (),
@@ -415,6 +477,36 @@ impl HostInodeOpIntern {
         let mappable = self.Mappable();
         let mut mappableLock = mappable.lock();
         return mappableLock.DecrRefOn(fr);
+    }
+
+    pub fn GetCachedRange(&mut self, fr: &Range) -> Vec<IoVec> {
+        let mut chunkStart = fr.Start() & !HUGE_PAGE_MASK;
+
+        let mut res = Vec::new();
+
+        let mappable = self.Mappable();
+        let mappableLock = mappable.lock();
+
+        while chunkStart < fr.End() {
+            let phyAddr = mappableLock.cf2pm.get(&chunkStart).unwrap();
+            let mut startOffset = 0;
+            if chunkStart < fr.Start() {
+                startOffset = fr.Start() - chunkStart;
+            }
+
+            let mut endOff = CHUNK_SIZE;
+            if chunkStart + CHUNK_SIZE > fr.End() {
+                endOff = fr.End() - chunkStart;
+            }
+
+            res.push(IoVec::NewFromAddr(
+                phyAddr + startOffset,
+                (endOff - startOffset) as usize,
+            ));
+            chunkStart += CHUNK_SIZE;
+        }
+
+        return res;
     }
 
     //get phyaddress ranges for the file range
@@ -572,6 +664,40 @@ impl HostInodeOpIntern {
 
     pub fn InodeType(&self) -> InodeType {
         return self.sattr.Type;
+    }
+
+    pub fn insert_cached_mapping(&mut self, offset: u64, phy_addr: u64) {
+        let binding = self.Mappable();
+        let mut mappable = binding.lock();
+        mappable.insert_cached_mapping(offset, phy_addr);
+    }
+
+    pub fn cached_protected_mapping(&mut self) {
+        let binding = self.Mappable();
+        let mut mappable = binding.lock();
+        mappable.cached_protected_mapping();
+    }
+
+    pub fn release_shared_for_cached(&mut self) {
+        let binding = self.Mappable();
+        let mut mappable = binding.lock();
+        mappable.Clear();
+    }
+
+    pub fn cached_protected(&self) -> bool {
+        self.mappable.clone()
+            .unwrap()
+            .is_cached_protected_mapping()
+    }
+
+    pub fn get_cached_page(&self, file_offset: u64) -> u64 {
+        let chunk_start = file_offset & !HUGE_PAGE_MASK;
+        let chunk_offset = file_offset - chunk_start;
+        let mappable = self.mappable.clone()
+            .unwrap();
+        let mappable_lock = mappable.lock();
+        let phy_addr = mappable_lock.cf2pm.get(&chunk_start).unwrap();
+        return phy_addr + chunk_offset;
     }
 }
 
@@ -777,6 +903,24 @@ impl HostInodeOp {
         } else {
             size
         };
+        if _f.cached_protected_file() {
+            let mut intern = self.lock();
+            if offset > intern.size {
+                return Ok(0);
+            }
+
+            let end = Self::ReadEndOffset(offset, size as i64, intern.size);
+            if end == offset {
+                return Ok(0);
+            }
+
+            let srcIovs =
+                intern.GetCachedRange(&Range::New(offset as u64, (end - offset) as u64));
+            let count = task.CopyIovsOutToIovs(&srcIovs, dsts, true)?;
+
+            return Ok(count as i64);
+        }
+
         let buf = DataBuff::New(size);
 
         let iovs = buf.Iovs(size);
@@ -1221,6 +1365,14 @@ impl HostInodeOp {
         return Ok(());
     }
 
+
+    pub fn cached_protected(&self) -> bool {
+        self.lock().cached_protected()
+    }
+
+    pub fn GetCachedRange(&self, range: &Range) -> Vec<IoVec> {
+        self.lock().GetCachedRange(range)
+    }
     /*********************************end of mappable****************************************************************/
 }
 

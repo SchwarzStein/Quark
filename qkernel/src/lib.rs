@@ -171,6 +171,7 @@ pub mod rdma_def;
 mod syscalls;
 pub mod drivers;
 pub mod attestation_agent;
+pub mod integrity_agent;
 
 #[cfg(feature = "snp")]
 use crate::qlib::kernel::arch::tee::sev_snp::ghcb::*;

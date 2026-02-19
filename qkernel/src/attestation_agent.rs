@@ -25,6 +25,7 @@ use alloc::vec::Vec;
 use crate::attestation_agent::util::connection::{tls_connection,
     ConnectionClient, Connector};
 use crate::attestation_agent::util::ResourceUri;
+use crate::integrity_agent::INTEGRITY_AGENT;
 use crate::qlib::common::{Result, Error};
 use crate::qlib::linux_def::{ATType, Flags, IoVec};
 use crate::qlib::mutex::QRwLock;
@@ -108,11 +109,15 @@ impl AttestationAgent {
             .expect("AA - failed to get Token");
         debug!("AA: Token:{:?}", token);
         for item in resource_list {
-            let resource = aa.kbc.get_resource(&mut conn_client, item.1)
+            let resource = aa.kbc.get_resource(&mut conn_client, &item.1)
                 .expect("Exptect resource");
             debug!("VM: Secret:{:?}", resource);
-            let dir_path = format!("/opt/{}", item.0);
-            retrived_resource.push((dir_path, resource));
+            if item.1.r#type.contains("manifest") {
+                INTEGRITY_AGENT.lock().add_manifest(resource);
+            } else {
+                let dir_path = format!("/opt/{}", item.0);
+                retrived_resource.push((dir_path, resource));
+            }
         }
         debug!("VM: AA - close connection to KBS");
         let _ = conn_client.close().map_err(|e| {
