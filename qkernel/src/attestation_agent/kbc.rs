@@ -36,7 +36,7 @@ pub trait KbsClientT {
     fn get_token(&self, tee: String, conn_client: &mut ConnectionClient, aa: &AttestationAgent)
         -> Result<Token>;
     fn update_token(&mut self, token: Option<Token>) -> Result<()>;
-    fn get_resource(&mut self, conn_client: &mut ConnectionClient, _uri: ResourceUri)
+    fn get_resource(&mut self, conn_client: &mut ConnectionClient, _uri: &ResourceUri)
         -> Result<Vec<u8>>;
     fn kbs_address(&self) -> String;
 }

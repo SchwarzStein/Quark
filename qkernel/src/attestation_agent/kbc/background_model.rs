@@ -74,9 +74,9 @@ impl KbsClientT for KbsClient<BackgroundCkeck> {
     fn get_resource(
         &mut self,
         conn_client: &mut ConnectionClient,
-        uri: super::ResourceUri,
+        uri: &super::ResourceUri,
     ) -> Result<Vec<u8>> {
-        let resource_req = HttpReq::Get(self.request_resource(&uri, conn_client.cookie.clone()));
+        let resource_req = HttpReq::Get(self.request_resource(uri, conn_client.cookie.clone()));
         let request = ConnectionClient::create_req_head(&resource_req);
         debug!("VM: send resource request:{:?}", request);
         let resp_res = conn_client.send_request(request);

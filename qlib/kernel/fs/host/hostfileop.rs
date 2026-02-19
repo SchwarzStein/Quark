@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::qlib::kernel::arch::tee::is_cc_active;
+use crate::qlib::kernel::PAGE_MGR;
 use crate::qlib::mutex::*;
 use alloc::string::String;
 use alloc::string::ToString;
@@ -222,16 +224,16 @@ impl SockOperations for HostFileOp {}
 
 impl PageTables {
     //Reset the cow page to the orginal file page, it is used for the file truncate
-    pub fn ResetFileMapping(
-        &self,
-        task: &Task,
-        addr: u64,
-        f: &HostInodeOp,
-        fr: &Range,
-        at: &AccessType,
-    ) -> Result<()> {
-        return self.MapFile(task, addr, f, fr, at, false);
-    }
+    // pub fn ResetFileMapping(
+    //     &self,
+    //     task: &Task,
+    //     addr: u64,
+    //     f: &HostInodeOp,
+    //     fr: &Range,
+    //     at: &AccessType,
+    // ) -> Result<()> {
+    //     return self.MapFile(task, addr, f, fr, at, false);
+    // }
 
     pub fn MapFile(
         &self,
@@ -241,11 +243,22 @@ impl PageTables {
         fr: &Range,
         at: &AccessType,
         _precommit: bool,
+        private: bool,
     ) -> Result<()> {
-        let bs = f.MapInternal(task, fr)?;
         let mut addr = addr;
-
         let pt = self;
+        if is_cc_active() && f.lock().cached_protected() {
+            let res = f.GetCachedRange(fr);
+
+            for b in &res {
+                pt.MapHost(task, addr, b, at, true)?;
+                addr += b.Len() as u64;
+            }
+            return Ok(());
+        }
+        let bs = f.MapInternal(task, fr)?;
+        let init_addr = addr;
+
         for b in &bs {
             //todo: handle precommit
             /*if precommit {
@@ -256,14 +269,50 @@ impl PageTables {
                     offset += MemoryDef::PAGE_SIZE;
                 }
             }*/
+            if is_cc_active() {
+                for i in 0..b.Len() as u64 / PAGE_SIZE {
+                    let page = { PAGE_MGR.AllocPage(true).unwrap() };
+                    let current_vaddr = addr + i * PAGE_SIZE;
+                    let current_paddr = b.Start() + i * PAGE_SIZE;
+                    debug!(
+                        "VM: Install Page in MapFile - copy pha:{:#0x} to page:{:#0x}",
+                        current_paddr, page
+                    );
+                    CopyPage(page, current_paddr);
 
-            pt.MapHost(task, addr, b, at, true)?;
+                    debug!("MapPage: vaddr:{:x}, paddr:{:x}",current_vaddr, page);
+                    pt.MapPage(
+                        Addr(current_vaddr),
+                        Addr(page),
+                        PageOpts::New(true, at.Write(), at.Exec()).Val(),
+                        &*PAGE_MGR,
+                    )?;
+
+                    if !private {
+                        {
+                            f.MapSharedPage(
+                                current_paddr,
+                                page,
+                                fr.Start() + current_vaddr - init_addr,
+                                at.Write(),
+                            );
+                        }
+                    }
+                    PAGE_MGR.DerefPage(page);
+                }
+            } else {
+                pt.MapHost(task, addr, b, at, true)?;
+            }
+
             addr += b.Len() as u64;
         }
 
         return Ok(());
     }
 
+    // If running with CC active you should not call this
+    // functions as it breakes the logic for cached protected files
+    // NOTE: or adjust the implementation accordingly.
     pub fn RemapFile(
         &self,
         task: &Task,

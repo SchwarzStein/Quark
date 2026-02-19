@@ -76,6 +76,10 @@ pub fn SysMmap(task: &mut Task, args: &SyscallArguments) -> Result<i64> {
         let file = task.GetFile(fd)?;
         let flags = file.Flags();
 
+        if opts.Perms.Exec() {
+            crate::integrity_agent::INTEGRITY_AGENT.lock().try_protect_item(&file, true)
+                .unwrap();
+        }
         // mmap unconditionally requires that the FD is readable.
         if !flags.Read {
             return Err(Error::SysError(SysErr::EACCES));

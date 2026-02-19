@@ -488,6 +488,14 @@ impl File {
     pub fn Downgrade(&self) -> FileWeak {
         return FileWeak(Arc::downgrade(&self.0));
     }
+
+    pub fn cached_protected_file(&self) -> bool {
+        self.Mappable().map_or(false, |m| {
+            m.HostIops().map_or(false, |hips| {
+                hips.cached_protected()
+            })
+        })
+    }
 }
 
 #[derive(Clone)]
