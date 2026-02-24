@@ -17,6 +17,7 @@ use hashbrown::{HashMap, HashSet};
 use sha2::{Digest, Sha512};
 use spin::mutex::Mutex;
 use crate::qlib::common::{Result, Error};
+use crate::qlib::kernel::arch::tee::is_cc_active;
 use crate::qlib::kernel::fs::host::hostinodeop::Mappable;
 use crate::qlib::linux_def::SysErr;
 use crate::qlib::{kernel::{fs::file::File, task::Task},
@@ -27,7 +28,7 @@ lazy_static!{
     pub static ref INTEGRITY_AGENT: Mutex<IntegrityAgent> =  Mutex::new(IntegrityAgent::default());
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug)]
 struct ManifestItem {
     path: String,
     hash: String
@@ -46,16 +47,15 @@ pub struct IntegrityAgent {
 
 impl IntegrityAgent {
     pub fn add_manifest(&mut self, manifest_json: Vec<u8>) {
-        let manifest_list: Vec<ManifestItem> = serde_json::from_slice(manifest_json.as_slice())
+        let manifest_list: HashMap<String, String>= serde_json::from_slice(manifest_json.as_slice())
             .expect("VM: Failed to deserialize manifest");
-        for item in manifest_list {
-            if let Some(_) = self.manifest.items.insert(item.path.clone(), item.hash) {
-                panic!("VM: Duplicated manifest item:{:?}", item.path);
-            }
-        }
+        self.manifest.items.extend(manifest_list);
     }
 
     pub fn try_protect_item(&mut self, file: &File, force_validate: bool) -> Result<()> {
+        if !is_cc_active() {
+            return Ok(());
+        }
         let fpath = file.Dirent.MyFullName();
         if let Some(h) = self.manifest.items.get(&fpath) {
             if file.Writable() {
@@ -93,9 +93,9 @@ impl IntegrityAgent {
             }
             let final_hash = hasher.finalize();
             let hash_string = final_hash.iter()
-                .map(|c| format!("{:2x}", c))
+                .map(|c| format!("{:02x}", c))
                 .collect::<String>();
-            debug!("VM: Hash:{:?} of file:{:?}", hash_string, manifest_item.path);
+            debug!("VM: Hash:{:#x?} of file:{:?}", hash_string, manifest_item.path);
             if manifest_item.hash != hash_string {
                 panic!("VM: mismatch hashes for file:{:?}: expected:{:?} - computed:{:?}",
                 manifest_item.path, manifest_item.hash, hash_string);
@@ -129,16 +129,19 @@ impl IntegrityAgent {
         let res = hinodop.MapInternal(current_task, &range)
             .expect("Failed to map shared file");
         let mut blocks = Vec::new();
+        let mut offset_counter = 0u64;
         for iovec in res {
             let start = iovec.start;
+            let len = iovec.len;
             let block = Self::cache_allocate()
                 .expect("Failed to allocate memory block for protected file");
             unsafe {
                 core::ptr::copy_nonoverlapping(start as *const u8,
-                    block as *mut u8, BLOCK_SIZE as usize);
+                    block as *mut u8, len);
             }
-            hinodop.insert_cached_mapping(start, block);
+            hinodop.insert_cached_mapping(offset_counter * BLOCK_SIZE, block);
             blocks.push(block);
+            offset_counter += 1;
         }
         hinodop.cached_protected_mapping();
         hinodop.release_shared_for_cached();
