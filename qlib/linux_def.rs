@@ -3035,6 +3035,12 @@ impl MemoryDef {
     pub const RDMA_GLOBAL_SHARE_OFFSET: u64 =
         Self::RDMA_LOCAL_SHARE_OFFSET + Self::RDMA_LOCAL_SHARE_SIZE;
     pub const RDMA_GLOBAL_SHARE_SIZE: u64 = 2 * Self::ONE_MB;
+    //
+    // CC: Host provided root(container) process arguments
+    // - Part of the measurement
+    //
+    pub const CC_PROC_ARGS_BASE: u64 = Self::RDMA_GLOBAL_SHARE_OFFSET;
+    pub const CC_PROC_ARGS_SIZE: u64 = Self::PAGE_SIZE_4K;
 
     // file map area
     #[cfg(not(feature = "tdx"))]

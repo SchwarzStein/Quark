@@ -93,6 +93,16 @@ impl VmType for VmCcEmul {
                     guest_private: false, // Semantically this is shared
                     host_backedup: false });
         }
+        _mem_map.insert(
+            MemAreaType::CcProcArgs,
+            MemArea {
+                base_host: adjust_addr_to_host(MemoryDef::CC_PROC_ARGS_BASE, _emul_type),
+                base_guest: MemoryDef::CC_PROC_ARGS_BASE,
+                size: MemoryDef::CC_PROC_ARGS_SIZE,
+                guest_private: true,
+                host_backedup: true,
+            },
+        );
         let mem_layout_config = MemLayoutConfig {
             mem_area_map: _mem_map,
             kernel_stack_size: MemoryDef::DEFAULT_STACK_SIZE as usize,
@@ -134,6 +144,7 @@ impl VmType for VmCcEmul {
         args: Args
     ) -> Result<VirtualMachine, Error> {
         crate::GLOBAL_ALLOCATOR.InitAllocator();
+        crate::GLOBAL_ALLOCATOR.MapCcProcArgsPage();
         *ROOT_CONTAINER_ID.lock() = args.ID.clone();
         if QUARK_CONFIG.lock().PerSandboxLog {
             let sandbox_name = match args
@@ -216,6 +227,9 @@ impl VmType for VmCcEmul {
         vms.controlSock = args.ControlSock;
         vms.vdsoAddr = self.vdso_address;
         vms.pivot = args.Pivot;
+        let(ccargbase_host, _, _) = self.vm_resources
+            .mem_area_info(MemAreaType::CcProcArgs).unwrap();
+        self.register_cc_root_process_args(&args, ccargbase_host);
         if let Some(id) = args
             .Spec
             .annotations

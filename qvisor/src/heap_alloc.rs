@@ -203,6 +203,39 @@ impl HostAllocator {
         }
     }
 
+    // The region is part of measurement only for HW-TEEs,
+    // but the mapping is also used in CCMode::NormalEmu
+    // for testing.
+    pub fn MapCcProcArgsPage(&self) {
+        let base = if IDENTICAL_MAPPING.load(Ordering::Acquire) {
+            MemoryDef::CC_PROC_ARGS_BASE
+        } else {
+            MemoryDef::CC_PROC_ARGS_BASE
+            + MemoryDef::UNIDENTICAL_MAPPING_OFFSET
+        };
+        let cc_args_page_addr = unsafe {
+            let flags = libc::MAP_SHARED | libc::MAP_ANON | libc::MAP_FIXED;
+            libc::mmap(
+                base as _,
+                MemoryDef::CC_PROC_ARGS_SIZE as usize,
+                libc::PROT_READ | libc::PROT_WRITE,
+                flags,
+                -1,
+                0,
+            ) as u64
+        };
+        if cc_args_page_addr == libc::MAP_FAILED as u64 {
+            panic!("mmap: failed to get mapped memory area for cc_args page");
+        }
+
+        assert!(
+            cc_args_page_addr == base,
+            "CC_PROC_ARGS_BASE expected address is {:x}, mmap address is {:x}",
+            base,
+            cc_args_page_addr
+        );
+    }
+
     #[cfg(feature = "tdx")]
     pub fn MapTDXSpecialPages(&self) {
         let vm_paras_addr = unsafe {

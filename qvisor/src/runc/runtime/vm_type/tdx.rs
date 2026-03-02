@@ -123,6 +123,17 @@ impl VmType for VmTDX {
             },
         );
 
+        _hshared_map.insert(
+            MemAreaType::CcProcArgs,
+            MemArea {
+                base_host: MemoryDef::CC_PROC_ARGS_BASE,
+                base_guest: MemoryDef::CC_PROC_ARGS_BASE,
+                size: MemoryDef::CC_PROC_ARGS_SIZE,
+                guest_private: true,
+                host_backedup: true,
+            },
+        );
+
         let mem_layout_config = MemLayoutConfig {
             mem_area_map: _hshared_map,
             kernel_stack_size: MemoryDef::DEFAULT_STACK_SIZE as usize,
@@ -169,6 +180,7 @@ impl VmType for VmTDX {
     ) -> Result<VirtualMachine, Error> {
         crate::GLOBAL_ALLOCATOR.InitAllocator();
         crate::GLOBAL_ALLOCATOR.MapTDXSpecialPages();
+        crate::GLOBAL_ALLOCATOR.MapCcProcArgsPage();
         *ROOT_CONTAINER_ID.lock() = args.ID.clone();
         if QUARK_CONFIG.lock().PerSandboxLog {
             let sandbox_name = match args
@@ -256,6 +268,9 @@ impl VmType for VmTDX {
         vms.controlSock = args.ControlSock;
         vms.vdsoAddr = self.vdso_address;
         vms.pivot = args.Pivot;
+        let(ccargbase_host, _, _) = self.vm_resources
+            .mem_area_info(MemAreaType::CcProcArgs).unwrap();
+        self.register_cc_root_process_args(&args, ccargbase_host);
         if let Some(id) = args
             .Spec
             .annotations
@@ -647,6 +662,26 @@ impl VmType for VmTDX {
                 true,
             )
             .expect("INIT_MEM_REGION ram failed");
+
+        //update cc-env region
+        let (ccargs_base_host, ccargs_base_guest, region_size) = self
+            .vm_resources
+            .mem_area_info(MemAreaType::CcProcArgs)
+            .unwrap();
+        self.tdx_vm
+            .as_ref()
+            .unwrap()
+            .init_mem_region_raw(
+                vm_fd,
+                vcpufd,
+                ccargs_base_host,
+                ccargs_base_guest,
+                region_size
+                    / MemoryDef::PAGE_SIZE,
+                true,
+            )
+            .expect("INIT_MEM_REGION cc-env failed");
+
         Ok(())
     }
 }

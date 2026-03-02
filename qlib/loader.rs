@@ -18,6 +18,17 @@ use alloc::vec::Vec;
 use super::auth::cap_set::*;
 use super::limits::*;
 
+#[derive(Default, Debug)]
+pub struct ProcessDigest {
+    pub cwd_hash: [u8; 32usize],
+    pub terminal: bool,
+    pub args_hash: [u8; 32usize],
+    pub envv_hash: [u8; 32usize],
+    pub user_hash: [u8; 32usize],
+    pub capabilities: TaskCaps,
+    pub hostname_hash: [u8; 32usize]
+}
+
 #[derive(Serialize, Deserialize, Default, Debug, Eq, PartialEq, Clone)]
 pub struct Process {
     //user

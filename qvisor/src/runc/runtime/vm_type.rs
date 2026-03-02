@@ -25,8 +25,8 @@ pub mod sevsnp;
 
 use std::sync::Arc;
 use kvm_ioctls::{Kvm, VmFd};
-use crate::{arch::vm::vcpu::ArchVirtCpu, elf_loader::KernelELF, qlib::common::Error,
-            runc::runtime};
+use crate::{arch::vm::vcpu::ArchVirtCpu, elf_loader::KernelELF, qlib::{common::Error,
+    loader::ProcessDigest}, runc::{runtime, specutils::specutils::Capabilities}};
 use runtime::{vm::VirtualMachine, loader::Args};
 
 pub trait VmType: std::fmt::Debug {
@@ -49,4 +49,41 @@ pub trait VmType: std::fmt::Debug {
                         share_space_addr: Option<u64>) -> Result<Vec<Arc<ArchVirtCpu>>, Error>;
     fn post_vm_initialize(&mut self, _vm_fd: &mut VmFd) -> Result<(), Error> { Ok(()) }
     fn post_init_update(&mut self, _vm_fd: &mut VmFd) -> Result<(), Error> { Ok(()) }
+    fn register_cc_root_process_args(&self, args: &Args, base: u64) {
+        use sha2::{Digest, Sha256};
+        let process_digest = unsafe {
+            &mut *(base as *mut ProcessDigest)
+        };
+        let process = &args.Spec.process;
+        process_digest.terminal = process.terminal;
+        process_digest.capabilities = Capabilities(false, &process.capabilities);
+
+        let mut hasher = Sha256::new();
+        let mut cwd: String = process.cwd.to_string();
+        if cwd.len() == 0 {
+            cwd = "/".to_string();
+        }
+        hasher.update(cwd.as_bytes());
+        process_digest.cwd_hash = hasher.finalize_reset().into();
+
+        for str in &process.args {
+            hasher.update(str.as_bytes());
+        }
+        process_digest.args_hash = hasher.finalize_reset().into();
+
+        for env in &process.env {
+            hasher.update(env.as_bytes());
+        }
+        process_digest.envv_hash = hasher.finalize_reset().into();
+
+        hasher.update(&process.user.uid.to_le_bytes());
+        hasher.update(&process.user.gid.to_le_bytes());
+        for gid in &process.user.additional_gids {
+            hasher.update(gid.to_le_bytes());
+        }
+        process_digest.user_hash = hasher.finalize_reset().into();
+        hasher.update(&args.Spec.hostname.as_bytes());
+        process_digest.hostname_hash = hasher.finalize().into();
+        debug!("VMM: process digest:{:?}", process_digest);
+    }
 }

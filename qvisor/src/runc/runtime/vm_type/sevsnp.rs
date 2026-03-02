@@ -115,6 +115,18 @@ impl VmType for VmSevSnp {
                 host_backedup: true,
             },
         );
+
+        _hshared_map.insert(
+            MemAreaType::CcProcArgs,
+            MemArea {
+                base_host: MemoryDef::CC_PROC_ARGS_BASE,
+                base_guest: MemoryDef::CC_PROC_ARGS_BASE,
+                size: MemoryDef::CC_PROC_ARGS_SIZE,
+                guest_private: true,
+                host_backedup: true,
+            },
+        );
+
         let mem_layout_config = MemLayoutConfig {
             mem_area_map: _hshared_map,
             kernel_stack_size: MemoryDef::DEFAULT_STACK_SIZE as usize,
@@ -158,6 +170,7 @@ impl VmType for VmSevSnp {
     ) -> Result<VirtualMachine, Error> {
         crate::GLOBAL_ALLOCATOR.InitAllocator();
         crate::GLOBAL_ALLOCATOR.MapSevSnpSpecialPages();
+        crate::GLOBAL_ALLOCATOR.MapCcProcArgsPage();
         *ROOT_CONTAINER_ID.lock() = args.ID.clone();
         if QUARK_CONFIG.lock().PerSandboxLog {
             let sandbox_name = match args
@@ -273,6 +286,9 @@ impl VmType for VmSevSnp {
         vms.controlSock = args.ControlSock;
         vms.vdsoAddr = self.vdso_address;
         vms.pivot = args.Pivot;
+        let(ccargbase_host, _, _) = self.vm_resources
+            .mem_area_info(MemAreaType::CcProcArgs).unwrap();
+        self.register_cc_root_process_args(&args, ccargbase_host);
         if let Some(id) = args
             .Spec
             .annotations
@@ -595,6 +611,24 @@ impl VmType for VmSevSnp {
             .as_mut()
             .unwrap()
             .update_data(_vm_fd, update_kernel)
+            .unwrap();
+
+
+        let (ccargs_base_host, _, region_size) = self
+            .vm_resources
+            .mem_area_info(MemAreaType::CcProcArgs)
+            .unwrap();
+        let ccargs_space: &mut [u8] = unsafe {
+            from_raw_parts_mut(
+                ccargs_base_host as *mut u8,
+                region_size as usize,
+            )
+        };
+        let update_ccargs_space = Update::new(ccargs_base_host >> 12, ccargs_space, PageType::Normal);
+        self.launcher
+            .as_mut()
+            .unwrap()
+            .update_data(_vm_fd, update_ccargs_space)
             .unwrap();
 
         //update cpuid_page

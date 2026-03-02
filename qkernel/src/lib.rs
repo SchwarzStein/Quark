@@ -952,7 +952,7 @@ pub extern "C" fn rust_main(
 }
 
 //Dummy: Only to avoid issues with qvisor
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 pub fn try_attest(config_path: Option<String>, envv: Option<Vec<String>>) {
     crate::attestation_agent::AttestationAgent::try_attest(config_path, envv);
@@ -991,7 +991,9 @@ fn StartRootContainer(_para: *const u8) -> ! {
     let task = Task::Current();
     let mut process = Process::default();
     Kernel::HostSpace::LoadProcessKernel(&mut process as *mut _ as u64) as usize;
-
+    if is_cc_active() {
+        load_process_kernel_as_expected(&process);
+    }
     let (_tid, entry, userStackAddr, kernelStackAddr) = {
         let mut processArgs = LOADER.Lock(task).unwrap().Init(process);
         match LOADER.LoadRootProcess(&mut processArgs) {
@@ -1016,6 +1018,47 @@ fn StartRootContainer(_para: *const u8) -> ! {
         entry, userStackAddr, kernelStackAddr
     );
     EnterUser(entry, userStackAddr, kernelStackAddr);
+}
+
+fn load_process_kernel_as_expected(process: &Process) {
+    use sha2::{Digest, Sha256};
+    let base = MemoryDef::CC_PROC_ARGS_BASE;
+    let expected_process_digest = unsafe {
+        &mut *(base as *mut ProcessDigest)
+    };
+    assert_eq!(expected_process_digest.terminal, process.Terminal);
+    assert_eq!(expected_process_digest.capabilities, process.Caps);
+    let mut hasher = Sha256::new();
+    let mut cwd: String = process.Cwd.clone().to_string();
+    if cwd.len() == 0 {
+        cwd = "/".to_string();
+    }
+    hasher.update(cwd.as_bytes());
+    assert_eq!(expected_process_digest.cwd_hash,
+       core::convert::Into::<[u8; 32]>::into(hasher.finalize_reset()));
+
+    for str in &process.Args {
+        hasher.update(str.as_bytes());
+    }
+    assert_eq!(expected_process_digest.args_hash,
+       core::convert::Into::<[u8; 32]>::into(hasher.finalize_reset()));
+
+    for env in &process.Envs {
+        hasher.update(env.as_bytes());
+    }
+    assert_eq!(expected_process_digest.envv_hash,
+       core::convert::Into::<[u8; 32]>::into(hasher.finalize_reset()));
+
+    hasher.update(&process.UID.to_le_bytes());
+    hasher.update(&process.GID.to_le_bytes());
+    for gid in &process.AdditionalGids {
+        hasher.update(gid.to_le_bytes());
+    }
+    assert_eq!(expected_process_digest.user_hash,
+       core::convert::Into::<[u8; 32]>::into(hasher.finalize_reset()));
+    hasher.update(&process.HostName.as_bytes());
+    assert_eq!(expected_process_digest.hostname_hash,
+       core::convert::Into::<[u8; 32]>::into(hasher.finalize_reset()));
 }
 
 #[panic_handler]

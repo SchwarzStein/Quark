@@ -277,6 +277,16 @@ impl VmType for VmCcRealm {
                 host_backedup: false,
             },
         );
+        _mem_map.insert(
+            MemAreaType::CcProcArgs,
+            MemArea {
+                base_host: adjust_addr_to_host(MemoryDef::CC_PROC_ARGS_BASE, _emul_type),
+                base_guest: MemoryDef::CC_PROC_ARGS_BASE,
+                size: MemoryDef::CC_PROC_ARGS_SIZE,
+                guest_private: true,
+                host_backedup: true,
+            },
+        );
         let mem_layout_config = MemLayoutConfig {
             mem_area_map: _mem_map,
             kernel_stack_size: MemoryDef::DEFAULT_STACK_SIZE as usize,
@@ -386,6 +396,9 @@ impl VmType for VmCcRealm {
         vms.controlSock = args.ControlSock;
         vms.vdsoAddr = self.vdso_address;
         vms.pivot = args.Pivot;
+        let(ccargbase_host, _, _) = self.vm_resources
+            .mem_area_info(MemAreaType::CcProcArgs).unwrap();
+        self.register_cc_root_process_args(&args, ccargbase_host);
         if let Some(id) = args.Spec.annotations.get(
             self.vm_resources.sandbox_uid_name.as_str()) {
             vms.podUid = id.clone();
@@ -409,7 +422,12 @@ impl VmType for VmCcRealm {
         let block_size = pagetable::HugePageType::MB2;
         for (_mt, _ma) in &self.vm_resources.mem_layout.mem_area_map {
             info!("VM: Creating mapping for {}", _mt.to_string());
-            if *_mt == MemAreaType::HypercallMmioArea {
+            if *_mt == MemAreaType::CcProcArgs {
+                let mut page_opt = PageOpts::Zero();
+                page_opt.SetGlobal().SetPresent().SetAccessed();
+                vms.KernelMap(Addr(_ma.base_guest), Addr(_ma.base_guest + _ma.size),
+                    Addr(_ma.base_guest), page_opt.Val())?;
+            } else if *_mt == MemAreaType::HypercallMmioArea {
                 let mut page_opt = PageOpts::Zero();
                 page_opt.SetWrite().SetGlobal().SetPresent()
                     .SetAccessed().SetMMIOPage();
@@ -536,10 +554,20 @@ impl VmType for VmCcRealm {
             self.entry_address, self.kernel_img_size >> 20);
         kvm_vm_arm_rme_init_ipa_range(vm_fd, self.entry_address, self.kernel_img_size)
             .expect("VM: Failed to init IPA for region: Kernel");
+        let (_, cpa_base, cpa_size) = self.vm_resources
+            .mem_area_info(MemAreaType::CcProcArgs).unwrap();
+        info!("VM: Init Realm-IPA range memory - CcProcArgs - GuestBase:{:#0x} - Size:{}MB.",
+            cpa_base, cpa_size >> 20);
+        kvm_vm_arm_rme_init_ipa_range(vm_fd, cpa_base, cpa_size)
+            .expect("VM: Failed to init IPA for region: CcProcArgs");
 
         info!("VM: Populate Realm memory - Kernel.");
         kvm_vm_arm_rme_populate_range(vm_fd, self.entry_address, self.kernel_img_size)
             .expect("VM: Failed to populate for region: Kernel");
+
+        info!("VM: Populate Realm memory - CcProcArgs.");
+        kvm_vm_arm_rme_populate_range(vm_fd, cpa_base, cpa_size)
+            .expect("VM: Failed to populate for region: CcProcArgs");
 
         info!("VM: Populate Realm memory - Guest Heap.");
         let initial_pheap = MemoryDef::GUEST_PRIVATE_INIT_HEAP_SIZE +
