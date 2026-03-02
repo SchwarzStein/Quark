@@ -200,6 +200,10 @@ pub fn ControlMsgHandler(fd: *const u8) {
             StartRootContainer(ptr::null());
         }
         Payload::ExecProcess(process) => {
+            if is_cc_active() {
+                error!("VM: No OCI-Exec with Confidential Comput enabled.");
+                WriteControlMsgResp(fd, &UCallResp::UCallRespErr(String::from("CC – no OCI Exec")), true);
+            }
             StartExecProcess(fd, process);
         }
         Payload::WaitContainer(cid) => match LOADER.WaitContainer(cid) {
